@@ -22,7 +22,7 @@ import qualified System.Posix.FilePath as Posix
 
 -- | Data kind representing whether a 'Path' is absolute or relative, and to
 -- what.
-data Reference = Current | Root | Drive | Remote | Home | Working
+data Reference = Orphan | Root | Drive | Remote | Home | Working
 
 -- | Data kind representing whether a 'Path' is a branch ('Directory') or a
 -- leaf ('File').
@@ -51,7 +51,7 @@ instance (e ~ Mixed) => IsString (Component e) where
 -- or a remote host, possibly with a mixture of unknown encodings and the
 -- system locale.
 data Path :: Reference -> Node -> Encoding -> * where
-    CurrentDirectory :: Path Current Directory e
+    OrphanDirectory :: Path Orphan Directory e
     RootDirectory :: Path Root Directory e
     DriveName :: !(Component e) -> Path Drive Directory e
     HostName :: !(Component e) -> Path Remote Directory e
@@ -63,14 +63,14 @@ data Path :: Reference -> Node -> Encoding -> * where
 
 deriving instance Show (Path r n e)
 
-instance Monoid (Path Current Directory e) where
-    mempty = cur
+instance Monoid (Path Orphan Directory e) where
+    mempty = orphan
     mappend = (</>)
 
-instance IsString (Path Current Directory Mixed) where
+instance IsString (Path Orphan Directory Mixed) where
     fromString = dir . fromString
 
-instance IsString (Path Current File Mixed) where
+instance IsString (Path Orphan File Mixed) where
     fromString = file . fromString
 
 -- | Resolve references in a 'Path'.
@@ -84,11 +84,11 @@ instance Absolute Home where
     absolute path = do
         Just homeDir <- Posix.getEnv "HOME"
         let dirs = tail (Posix.splitDirectories homeDir)
-            rootPath = mconcat (map (DirectoryPath cur . ByteString) dirs)
+            rootPath = mconcat (map (DirectoryPath orphan . ByteString) dirs)
         return (rootPath <//> relative path)
       where
-        relative :: Path Home n e -> Path Current n e
-        relative HomeDirectory = cur
+        relative :: Path Home n e -> Path Orphan n e
+        relative HomeDirectory = orphan
         relative (DirectoryPath p r) = DirectoryPath (relative p) r
         relative (FilePath p r) = FilePath (relative p) r
         relative (FileExtension p r) = FileExtension (relative p) r
@@ -97,11 +97,11 @@ instance Absolute Working where
     absolute path = do
         workingDir <- Posix.getWorkingDirectory
         let dirs = tail (Posix.splitDirectories workingDir)
-            rootPath = mconcat (map (DirectoryPath cur . ByteString) dirs)
+            rootPath = mconcat (map (DirectoryPath orphan . ByteString) dirs)
         return (rootPath <//> relative path)
       where
-        relative :: Path Working n e -> Path Current n e
-        relative WorkingDirectory = cur
+        relative :: Path Working n e -> Path Orphan n e
+        relative WorkingDirectory = orphan
         relative (DirectoryPath p r) = DirectoryPath (relative p) r
         relative (FilePath p r) = FilePath (relative p) r
         relative (FileExtension p r) = FileExtension (relative p) r
@@ -109,7 +109,7 @@ instance Absolute Working where
 -- | Encode the 'Text' components using the system locale.
 encode :: Path r n Mixed -> IO (Path r n Encoded)
 encode path = case path of
-    CurrentDirectory -> return CurrentDirectory
+    OrphanDirectory -> return OrphanDirectory
     RootDirectory -> return RootDirectory
     DriveName m -> encoded m DriveName
     HostName m -> encoded m HostName
@@ -126,7 +126,7 @@ encode path = case path of
 -- | Decode the 'ByteString' components using the system locale.
 decode :: Path r n Mixed -> IO (Path r n Decoded)
 decode path = case path of
-    CurrentDirectory -> return CurrentDirectory
+    OrphanDirectory -> return OrphanDirectory
     RootDirectory -> return RootDirectory
     DriveName m -> decoded m DriveName
     HostName m -> decoded m HostName
@@ -143,7 +143,7 @@ decode path = case path of
 -- | Render a 'Path' to a POSIX representation.
 posix :: Path r n Encoded -> ByteString
 posix path = case path of
-    CurrentDirectory -> ""
+    OrphanDirectory -> ""
     RootDirectory -> "/"
     DriveName c -> "/" <> component c <> ":" <> "/"
     HostName c -> component c <> ":/"
@@ -159,7 +159,7 @@ posix path = case path of
 -- | Render a 'Path' to a Windows representation.
 windows :: Path r n Decoded -> Text
 windows path = case path of
-    CurrentDirectory -> ""
+    OrphanDirectory -> ""
     RootDirectory -> "\\"
     DriveName c -> component c <> ":" <> "\\"
     HostName c -> "\\\\" <> component c <> "\\"
@@ -173,31 +173,31 @@ windows path = case path of
     component (Decode t) = t
 
 -- | Append a 'Path' to a directory.
-(</>) :: Path r Directory e -> Path Current n e -> Path r n e
-p </> CurrentDirectory = p
+(</>) :: Path r Directory e -> Path Orphan n e -> Path r n e
+p </> OrphanDirectory = p
 p </> DirectoryPath p' b = DirectoryPath (p </> p') b
 p </> FilePath p' b = FilePath (p </> p') b
 p </> FileExtension p' b = FileExtension (p </> p') b
 
 -- | Append a 'Path' to a directory under 'root'.
-(<//>) :: Path Current Directory e -> Path Current n e -> Path Root n e
+(<//>) :: Path Orphan Directory e -> Path Orphan n e -> Path Root n e
 p <//> p' = root </> p </> p'
 
 -- | Append a 'Path' do a 'drive' name.
-(<:/>) :: Component e -> Path Current n e -> Path Drive n e
+(<:/>) :: Component e -> Path Orphan n e -> Path Drive n e
 c <:/> p = drive c </> p
 
 -- | Append a 'Path' to a directory under 'home'.
-(<~/>) :: Path Current Directory e -> Path Current n e -> Path Home n e
+(<~/>) :: Path Orphan Directory e -> Path Orphan n e -> Path Home n e
 p <~/> p' = home </> p </> p'
 
 -- | Append a file extension to a file 'Path'.
 (<.>) :: Path r File e -> Component e -> Path r File e
 p <.> c = FileExtension p c
 
--- | The current part of the path we're working with.
-cur :: Path Current Directory e
-cur = CurrentDirectory
+-- | An \"orphan\" directory has no 'Reference' point.
+orphan :: Path Orphan Directory e
+orphan = OrphanDirectory
 
 -- | The root directory.
 root :: Path Root Directory e
@@ -216,9 +216,9 @@ cwd :: Path Working Directory e
 cwd = WorkingDirectory
 
 -- | A directory.
-dir :: Component e -> Path Current Directory e
-dir = DirectoryPath cur
+dir :: Component e -> Path Orphan Directory e
+dir = DirectoryPath orphan
 
 -- | A file name.
-file :: Component e -> Path Current File e
-file = FilePath cur
+file :: Component e -> Path Orphan File e
+file = FilePath orphan
