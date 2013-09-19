@@ -65,15 +65,12 @@ data Path :: Reference -> Node -> Encoding -> * where
 
 deriving instance Show (Path r n e)
 
-instance Monoid (Path Orphan Directory e) where
+instance (r ~ Orphan) => Monoid (Path r Directory e) where
     mempty = orphan
     mappend = (</>)
 
-instance IsString (Path Orphan Directory Mixed) where
+instance (r ~ Orphan, n ~ Directory, e ~ Mixed) => IsString (Path r n e) where
     fromString = dir . fromString
-
-instance IsString (Path Orphan File Mixed) where
-    fromString = file . fromString
 
 -- * Operations
 
