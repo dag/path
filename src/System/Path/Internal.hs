@@ -20,6 +20,8 @@ import qualified Data.Text.Encoding.Locale as Text
 import qualified System.Posix.ByteString as Posix
 import qualified System.Posix.FilePath as Posix
 
+-- * Types
+
 -- | Data kind representing whether a 'Path' is absolute or relative, and to
 -- what.
 data Reference = Orphan | Root | Drive | Remote | Home | Working
@@ -72,6 +74,8 @@ instance IsString (Path Orphan Directory Mixed) where
 
 instance IsString (Path Orphan File Mixed) where
     fromString = file . fromString
+
+-- * Operations
 
 -- | Resolve references in a 'Path'.
 class Absolute r where
@@ -171,6 +175,8 @@ windows path = case path of
   where
     component :: Component Decoded -> Text
     component (Decode t) = t
+
+-- * Combinators
 
 -- | Append a 'Path' to a directory.
 (</>) :: Path r Directory e -> Path Orphan n e -> Path r n e
