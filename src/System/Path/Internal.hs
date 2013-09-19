@@ -183,9 +183,13 @@ p </> FileExtension p' b = FileExtension (p </> p') b
 (<//>) :: Path Orphan Directory e -> Path Orphan n e -> Path Root n e
 p <//> p' = root </> p </> p'
 
--- | Append a 'Path' do a 'drive' name.
+-- | Append a 'Path' to a 'drive' name.
 (<:/>) :: Component e -> Path Orphan n e -> Path Drive n e
 c <:/> p = drive c </> p
+
+-- | Append a 'Path' to a 'host' name.
+(<@/>) :: Component e -> Path Orphan n e -> Path Remote n e
+c <@/> p = host c </> p
 
 -- | Append a 'Path' to a directory under 'home'.
 (<~/>) :: Path Orphan Directory e -> Path Orphan n e -> Path Home n e
@@ -206,6 +210,10 @@ root = RootDirectory
 -- | A drive letter / device name.
 drive :: Component e -> Path Drive Directory e
 drive = DriveName
+
+-- | A remote host.
+host :: Component e -> Path Remote Directory e
+host = HostName
 
 -- | The home directory of the current user.
 home :: Path Home Directory e
