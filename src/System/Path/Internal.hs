@@ -1,5 +1,4 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -65,7 +64,7 @@ data Path :: Reference -> Node -> Encoding -> * where
 
 deriving instance Show (Path r n e)
 
-instance (r ~ Orphan) => Monoid (Path r Directory e) where
+instance (r ~ Orphan, n ~ Directory) => Monoid (Path r n e) where
     mempty = orphan
     mappend = (</>)
 
