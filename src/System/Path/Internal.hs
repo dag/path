@@ -10,7 +10,7 @@
 -- Portability: non-portable
 module System.Path.Internal where
 
-import Control.Applicative ((<$>))
+import Control.Applicative ((<$>), (<*>))
 import Data.ByteString (ByteString)
 import Data.Monoid (Monoid(..), (<>))
 import Data.String (IsString(..))
@@ -52,15 +52,16 @@ instance (e ~ Mixed) => IsString (Component e) where
 -- or a remote host, possibly with a mixture of unknown encodings and the
 -- system locale.
 data Path :: Reference -> Node -> Encoding -> * where
+    Path :: !(Path r Directory e) -> !(Path Orphan n e) -> Path r n e
+    Extension :: !(Path r File e) -> !(Component e) -> Path r File e
     OrphanDirectory :: Path Orphan Directory e
     RootDirectory :: Path Root Directory e
     DriveName :: !(Component e) -> Path Drive Directory e
     HostName :: !(Component e) -> Path Remote Directory e
     HomeDirectory :: Path Home Directory e
     WorkingDirectory :: Path Working Directory e
-    DirectoryPath :: !(Path c Directory e) -> !(Component e) -> Path c Directory e
-    FilePath :: !(Path c Directory e) -> !(Component e) -> Path c File e
-    FileExtension :: !(Path c File e) -> !(Component e) -> Path c File e
+    DirectoryName :: !(Component e) -> Path Orphan Directory e
+    FileName :: !(Component e) -> Path Orphan File e
 
 deriving instance Show (Path r n e)
 
@@ -84,40 +85,39 @@ instance Absolute Home where
     absolute path = do
         Just homeDir <- Posix.getEnv "HOME"
         let dirs = tail (Posix.splitDirectories homeDir)
-            rootPath = mconcat (map (DirectoryPath orphan . ByteString) dirs)
+            rootPath = mconcat (map (DirectoryName . ByteString) dirs)
         return (rootPath <//> relative path)
       where
         relative :: Path Home n e -> Path Orphan n e
         relative HomeDirectory = orphan
-        relative (DirectoryPath p r) = DirectoryPath (relative p) r
-        relative (FilePath p r) = FilePath (relative p) r
-        relative (FileExtension p r) = FileExtension (relative p) r
+        relative (Path p p') = Path (relative p) p'
+        relative (Extension p c) = Extension (relative p) c
 
 instance Absolute Working where
     absolute path = do
         workingDir <- Posix.getWorkingDirectory
         let dirs = tail (Posix.splitDirectories workingDir)
-            rootPath = mconcat (map (DirectoryPath orphan . ByteString) dirs)
+            rootPath = mconcat (map (DirectoryName . ByteString) dirs)
         return (rootPath <//> relative path)
       where
         relative :: Path Working n e -> Path Orphan n e
         relative WorkingDirectory = orphan
-        relative (DirectoryPath p r) = DirectoryPath (relative p) r
-        relative (FilePath p r) = FilePath (relative p) r
-        relative (FileExtension p r) = FileExtension (relative p) r
+        relative (Path p p') = Path (relative p) p'
+        relative (Extension p c) = Extension (relative p) c
 
 -- | Encode the 'Text' components using the system locale.
 encode :: Path r n Mixed -> IO (Path r n Encoded)
 encode path = case path of
+    Path p p' -> Path <$> encode p <*> encode p'
+    Extension p m -> encode p >>= encoded m . Extension
     OrphanDirectory -> return OrphanDirectory
     RootDirectory -> return RootDirectory
     DriveName m -> encoded m DriveName
     HostName m -> encoded m HostName
     HomeDirectory -> return HomeDirectory
     WorkingDirectory -> return WorkingDirectory
-    DirectoryPath p m -> encode p >>= encoded m . DirectoryPath
-    FilePath p m -> encode p >>= encoded m . FilePath
-    FileExtension p m -> encode p >>= encoded m . FileExtension
+    DirectoryName m -> encoded m DirectoryName
+    FileName m -> encoded m FileName
   where
     encoded :: Component Mixed -> (Component Encoded -> a) -> IO a
     encoded (ByteString b) f = f . Encode <$> return b
@@ -126,15 +126,16 @@ encode path = case path of
 -- | Decode the 'ByteString' components using the system locale.
 decode :: Path r n Mixed -> IO (Path r n Decoded)
 decode path = case path of
+    Path p p' -> Path <$> decode p <*> decode p'
+    Extension p m -> decode p >>= decoded m . Extension
     OrphanDirectory -> return OrphanDirectory
     RootDirectory -> return RootDirectory
     DriveName m -> decoded m DriveName
     HostName m -> decoded m HostName
     HomeDirectory -> return HomeDirectory
     WorkingDirectory -> return WorkingDirectory
-    DirectoryPath p m -> decode p >>= decoded m . DirectoryPath
-    FilePath p m -> decode p >>= decoded m . FilePath
-    FileExtension p m -> decode p >>= decoded m . FileExtension
+    DirectoryName m -> decoded m DirectoryName
+    FileName m -> decoded m FileName
   where
     decoded :: Component Mixed -> (Component Decoded -> a) -> IO a
     decoded (ByteString b) f = f . Decode <$> Text.decodeLocale b
@@ -143,15 +144,16 @@ decode path = case path of
 -- | Render a 'Path' to a POSIX representation.
 posix :: Path r n Encoded -> ByteString
 posix path = case path of
+    Path p p' -> posix p <> posix p'
+    Extension p c -> posix p <> "." <> component c
     OrphanDirectory -> ""
     RootDirectory -> "/"
     DriveName c -> "/" <> component c <> ":" <> "/"
     HostName c -> component c <> ":/"
     HomeDirectory -> "~/"
     WorkingDirectory -> "./"
-    FilePath p c -> posix p <> component c
-    DirectoryPath p c -> posix p <> component c <> "/"
-    FileExtension p e -> posix p <> "." <> component e
+    DirectoryName c -> component c <> "/"
+    FileName c -> component c
   where
     component :: Component Encoded -> ByteString
     component (Encode b) = b
@@ -159,15 +161,16 @@ posix path = case path of
 -- | Render a 'Path' to a Windows representation.
 windows :: Path r n Decoded -> Text
 windows path = case path of
+    Path p p' -> windows p <> windows p'
+    Extension p c -> windows p <> "." <> component c
     OrphanDirectory -> ""
     RootDirectory -> "\\"
     DriveName c -> component c <> ":" <> "\\"
     HostName c -> "\\\\" <> component c <> "\\"
     HomeDirectory -> "%UserProfile%"
     WorkingDirectory -> ".\\"
-    FilePath p c -> windows p <> component c
-    DirectoryPath p c -> windows p <> component c <> "\\"
-    FileExtension p e -> windows p <> "." <> component e
+    DirectoryName c -> component c <> "\\"
+    FileName c -> component c
   where
     component :: Component Decoded -> Text
     component (Decode t) = t
@@ -177,9 +180,7 @@ windows path = case path of
 -- | Append a 'Path' to a directory.
 (</>) :: Path r Directory e -> Path Orphan n e -> Path r n e
 p </> OrphanDirectory = p
-p </> DirectoryPath p' b = DirectoryPath (p </> p') b
-p </> FilePath p' b = FilePath (p </> p') b
-p </> FileExtension p' b = FileExtension (p </> p') b
+p </> p' = Path p p'
 
 -- | Append a 'Path' to a directory under 'root'.
 (<//>) :: Path Orphan Directory e -> Path Orphan n e -> Path Root n e
@@ -199,7 +200,7 @@ p <~/> p' = home </> p </> p'
 
 -- | Append a file extension to a file 'Path'.
 (<.>) :: Path r File e -> Component e -> Path r File e
-p <.> c = FileExtension p c
+p <.> c = Extension p c
 
 -- | An \"orphan\" directory has no 'Reference' point.
 orphan :: Path Orphan Directory e
@@ -227,8 +228,8 @@ cwd = WorkingDirectory
 
 -- | A directory.
 dir :: Component e -> Path Orphan Directory e
-dir = DirectoryPath orphan
+dir = DirectoryName
 
 -- | A file name.
 file :: Component e -> Path Orphan File e
-file = FilePath orphan
+file = FileName
