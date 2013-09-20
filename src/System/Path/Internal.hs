@@ -14,7 +14,7 @@
 module System.Path.Internal where
 
 import Control.Applicative ((<$>), (<*>), pure)
-import Data.ByteString.Char8 (ByteString)
+import Data.ByteString (ByteString)
 import Data.ByteString.Lazy.Builder (byteString, char7)
 import Data.Monoid (Monoid(..), (<>))
 import Data.String (IsString(..))
