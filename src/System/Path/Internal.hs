@@ -1,8 +1,11 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeOperators #-}
 
 -- |
 -- Maintainer: dag.odenhall@gmail.com
@@ -10,226 +13,215 @@
 -- Portability: non-portable
 module System.Path.Internal where
 
-import Control.Applicative ((<$>), (<*>))
-import Data.ByteString (ByteString)
+import Control.Applicative ((<$>), (<*>), pure)
+import Data.ByteString.Char8 (ByteString)
+import Data.ByteString.Lazy.Builder (byteString, char7)
 import Data.Monoid (Monoid(..), (<>))
 import Data.String (IsString(..))
 import Data.Text (Text)
-import qualified Data.Text.Encoding.Locale as Text
+import Data.Text.Encoding.Locale (encodeLocale', decodeLocale')
+import Data.Text.Lazy.Builder (fromText)
+import GHC.IO.Encoding (getLocaleEncoding)
+import GHC.IO.Handle (noNewlineTranslation)
+import Prelude hiding ((.), id)
+import qualified Data.ByteString.Lazy.Builder as ByteString
+import qualified Data.Text.Lazy.Builder as Text
+import qualified Prelude
 import qualified System.Posix.ByteString as Posix
-import qualified System.Posix.FilePath as Posix
 
 -- * Types
 
--- | Data kind representing whether a 'Path' is absolute or relative, and to
--- what.
-data Reference = Orphan | Root | Drive | Remote | Home | Working
+-- | Poly-kinded @Category@.
+class Category cat where
+    id :: cat a a
+    (.) :: cat b c -> cat a b -> cat a c
 
--- | Data kind representing whether a 'Path' is a branch ('Directory') or a
--- leaf ('File').
-data Node = Directory | File
+instance Category (->) where
+    id = Prelude.id
+    (.) = (Prelude..)
 
--- | Data kind representing whether a 'Path' 'Component' has a mix of 'Text'
--- and 'ByteString' or if it  has been encoded or decoded using the system
--- locale.
-data Encoding = Mixed | Encoded | Decoded
+-- | Abstract path morphisms.
+data Path :: Node -> Node -> * where
+    Edge :: a </> a
+    Path :: a </> b -> b </> c -> a </> c
+    RootDirectory :: RootTree </> DirectoryTree
+    DriveName :: !Component -> DriveTree </> DirectoryTree
+    HostName :: !Component -> RemoteTree </> DirectoryTree
+    HomeDirectory :: HomeTree </> DirectoryTree
+    WorkingDirectory :: WorkingTree </> DirectoryTree
+    DirectoryName :: !Component -> Tree t </> DirectoryTree
+    FileName :: !Component -> Tree t </> File
+    FileExtension :: !Component -> File </> File
 
--- | A 'Path' with 'Mixed' 'Encoding' may contain both 'Text' and 'ByteString'
--- components; otherwise, the components have been encoded or decoded with the
--- system locale.
-data Component :: Encoding -> * where
-    ByteString :: !ByteString -> Component Mixed
-    Text :: !Text -> Component Mixed
-    Encode :: !ByteString -> Component Encoded
-    Decode :: !Text -> Component Decoded
+deriving instance Show (Path a b)
 
-deriving instance Show (Component e)
+instance (b ~ a) => Monoid (Path a b) where
+    mempty = id
+    mappend = (.)
 
-instance (e ~ Mixed) => IsString (Component e) where
-    fromString = Text . fromString
+instance Category Path where
+    id = Edge
+    Edge . a = a
+    b . Edge = b
+    b . a = Path a b
 
--- | An absolute or relative path to a file or directory on a local filesystem
--- or a remote host, possibly with a mixture of unknown encodings and the
--- system locale.
-data Path :: Reference -> Node -> Encoding -> * where
-    Path :: !(Path r Directory e) -> !(Path Orphan n e) -> Path r n e
-    Extension :: !(Path r File e) -> !(Component e) -> Path r File e
-    OrphanDirectory :: Path Orphan Directory e
-    RootDirectory :: Path Root Directory e
-    DriveName :: !(Component e) -> Path Drive Directory e
-    HostName :: !(Component e) -> Path Remote Directory e
-    HomeDirectory :: Path Home Directory e
-    WorkingDirectory :: Path Working Directory e
-    DirectoryName :: !(Component e) -> Path Orphan Directory e
-    FileName :: !(Component e) -> Path Orphan File e
-
-deriving instance Show (Path r n e)
-
-instance (r ~ Orphan, n ~ Directory) => Monoid (Path r n e) where
-    mempty = orphan
-    mappend = (</>)
-
-instance (r ~ Orphan, n ~ Directory, e ~ Mixed) => IsString (Path r n e) where
+instance (a ~ DirectoryTree, b ~ a) => IsString (Path a b) where
     fromString = dir . fromString
+
+-- | Infix type operator for 'Path'.
+type (</>) = Path
+
+-- | An abstract directory tree, not anchored to any root reference.
+type DirectoryTree = Tree Directory
+
+-- | The root directory tree on a POSIX filesystem.
+type RootTree = Tree Root
+
+-- | The root directory tree of a drive on a Windows filesystem.
+type DriveTree = Tree Drive
+
+-- | The root directory tree on a remote machine.
+type RemoteTree = Tree Remote
+
+-- | The home directory tree of the current user.
+type HomeTree = Tree Home
+
+-- | The current working directory tree.
+type WorkingTree = Tree Working
+
+-- | Data kind representing whether a 'Path' is absolute or relative, and in
+-- reference to what, if anything.
+data Reference = Directory | Root | Drive | Remote | Home | Working
+
+-- | Data kind representing whether a 'Path' is a leaf ('File') or a branch
+-- ('Tree').
+data Node = File | Tree Reference
+
+-- | Components of a 'Path' can either be raw bytes, or unicode using the
+-- system locale encoding.
+data Component = ByteString !ByteString | Text !Text deriving Show
+
+instance IsString Component where
+    fromString = Text . fromString
 
 -- * Operations
 
--- | Resolve references in a 'Path'.
-class Absolute r where
-    absolute :: Path r n Mixed -> IO (Path Root n Mixed)
+-- | Build a POSIX-compatible absolute path.
+posix :: (Posix r) => Tree r </> b -> IO ByteString.Builder
+posix path = do
+    locale <- getLocaleEncoding
+    let encode (ByteString b) = pure (byteString b)
+        encode (Text t) =
+            byteString <$> encodeLocale' locale noNewlineTranslation t
+        build :: a </> b -> IO ByteString.Builder
+        build = \case
+            Edge -> pure mempty
+            Path a b -> mappend <$> build a <*> build b
+            RootDirectory -> pure (char7 '/')
+            DriveName c -> do
+                b <- encode c
+                return (char7 '/' <> b <> char7 ':')
+            HostName c -> mappend <$> encode c <*> pure (char7 ':')
+            HomeDirectory -> do
+                Just homeDir <- Posix.getEnv "HOME"
+                return (byteString homeDir <> char7 '/')
+            WorkingDirectory -> do
+                workingDir <- Posix.getWorkingDirectory
+                return (byteString workingDir <> char7 '/')
+            DirectoryName c -> mappend <$> encode c <*> pure (char7 '/')
+            FileName c -> encode c
+            FileExtension c -> mappend <$> pure (char7 '.') <*> encode c
+    build path
 
-instance Absolute Root where
-    absolute = return
+-- | References that we can resolve on a POSIX system.
+class Posix (r :: Reference)
+instance Posix Directory
+instance Posix Root
+instance Posix Home
+instance Posix Working
 
-instance Absolute Home where
-    absolute path = do
-        Just homeDir <- Posix.getEnv "HOME"
-        let dirs = tail (Posix.splitDirectories homeDir)
-            rootPath = mconcat (map (DirectoryName . ByteString) dirs)
-        return (rootPath <//> relative path)
-      where
-        relative :: Path Home n e -> Path Orphan n e
-        relative HomeDirectory = orphan
-        relative (Path p p') = Path (relative p) p'
-        relative (Extension p c) = Extension (relative p) c
+-- | Build a Windows-compatible absolute path.
+windows :: (Windows r) => Tree r </> b -> IO Text.Builder
+windows path = do
+    locale <- getLocaleEncoding
+    let decode (ByteString b) =
+            fromText <$> decodeLocale' locale noNewlineTranslation b
+        decode (Text t) = pure (fromText t)
+        build :: a </> b -> IO Text.Builder
+        build = \case
+            Edge -> pure mempty
+            Path a b -> mappend <$> build a <*> build b
+            RootDirectory -> pure "\\"
+            DriveName c -> mappend <$> decode c <*> pure ":\\"
+            HostName c -> do
+                b <- decode c
+                return ("\\\\" <> b <> "\\")
+            HomeDirectory -> do
+                Just homeDir <- Posix.getEnv "HOME"
+                b <- decode (ByteString homeDir)
+                return (b <> "\\")
+            WorkingDirectory -> do
+                workingDir <- Posix.getWorkingDirectory
+                b <- decode (ByteString workingDir)
+                return (b <> "\\")
+            DirectoryName c -> mappend <$> decode c <*> pure "\\"
+            FileName c -> decode c
+            FileExtension c -> mappend <$> pure "." <*> decode c
+    build path
 
-instance Absolute Working where
-    absolute path = do
-        workingDir <- Posix.getWorkingDirectory
-        let dirs = tail (Posix.splitDirectories workingDir)
-            rootPath = mconcat (map (DirectoryName . ByteString) dirs)
-        return (rootPath <//> relative path)
-      where
-        relative :: Path Working n e -> Path Orphan n e
-        relative WorkingDirectory = orphan
-        relative (Path p p') = Path (relative p) p'
-        relative (Extension p c) = Extension (relative p) c
-
--- | Encode the 'Text' components using the system locale.
-encode :: Path r n Mixed -> IO (Path r n Encoded)
-encode path = case path of
-    Path p p' -> Path <$> encode p <*> encode p'
-    Extension p m -> encode p >>= encoded m . Extension
-    OrphanDirectory -> return OrphanDirectory
-    RootDirectory -> return RootDirectory
-    DriveName m -> encoded m DriveName
-    HostName m -> encoded m HostName
-    HomeDirectory -> return HomeDirectory
-    WorkingDirectory -> return WorkingDirectory
-    DirectoryName m -> encoded m DirectoryName
-    FileName m -> encoded m FileName
-  where
-    encoded :: Component Mixed -> (Component Encoded -> a) -> IO a
-    encoded (ByteString b) f = f . Encode <$> return b
-    encoded (Text t) f = f . Encode <$> Text.encodeLocale t
-
--- | Decode the 'ByteString' components using the system locale.
-decode :: Path r n Mixed -> IO (Path r n Decoded)
-decode path = case path of
-    Path p p' -> Path <$> decode p <*> decode p'
-    Extension p m -> decode p >>= decoded m . Extension
-    OrphanDirectory -> return OrphanDirectory
-    RootDirectory -> return RootDirectory
-    DriveName m -> decoded m DriveName
-    HostName m -> decoded m HostName
-    HomeDirectory -> return HomeDirectory
-    WorkingDirectory -> return WorkingDirectory
-    DirectoryName m -> decoded m DirectoryName
-    FileName m -> decoded m FileName
-  where
-    decoded :: Component Mixed -> (Component Decoded -> a) -> IO a
-    decoded (ByteString b) f = f . Decode <$> Text.decodeLocale b
-    decoded (Text t) f = f . Decode <$> return t
-
--- | Render a 'Path' to a POSIX representation.
-posix :: Path r n Encoded -> ByteString
-posix path = case path of
-    Path p p' -> posix p <> posix p'
-    Extension p c -> posix p <> "." <> component c
-    OrphanDirectory -> ""
-    RootDirectory -> "/"
-    DriveName c -> "/" <> component c <> ":" <> "/"
-    HostName c -> component c <> ":/"
-    HomeDirectory -> "~/"
-    WorkingDirectory -> "./"
-    DirectoryName c -> component c <> "/"
-    FileName c -> component c
-  where
-    component :: Component Encoded -> ByteString
-    component (Encode b) = b
-
--- | Render a 'Path' to a Windows representation.
-windows :: Path r n Decoded -> Text
-windows path = case path of
-    Path p p' -> windows p <> windows p'
-    Extension p c -> windows p <> "." <> component c
-    OrphanDirectory -> ""
-    RootDirectory -> "\\"
-    DriveName c -> component c <> ":" <> "\\"
-    HostName c -> "\\\\" <> component c <> "\\"
-    HomeDirectory -> "%UserProfile%"
-    WorkingDirectory -> ".\\"
-    DirectoryName c -> component c <> "\\"
-    FileName c -> component c
-  where
-    component :: Component Decoded -> Text
-    component (Decode t) = t
+-- | References that we can resolve on a Windows system.
+class Windows (r :: Reference)
+instance Windows Directory
+instance Windows Drive
+instance Windows Home
+instance Windows Working
 
 -- * Combinators
 
 -- | Append a 'Path' to a directory.
-(</>) :: Path r Directory e -> Path Orphan n e -> Path r n e
-p </> OrphanDirectory = p
-p </> p' = Path p p'
-
--- | Append a 'Path' to a directory under 'root'.
-(<//>) :: Path Orphan Directory e -> Path Orphan n e -> Path Root n e
-p <//> p' = root </> p </> p'
+(</>) :: a </> b -> b </> c -> a </> c
+(</>) = flip (.)
 
 -- | Append a 'Path' to a 'drive' name.
-(<:/>) :: Component e -> Path Orphan n e -> Path Drive n e
-c <:/> p = drive c </> p
+(<:/>) :: Component -> DirectoryTree </> b -> DriveTree </> b
+d <:/> b = drive d </> b
 
 -- | Append a 'Path' to a 'host' name.
-(<@/>) :: Component e -> Path Orphan n e -> Path Remote n e
+(<@/>) :: Component -> DirectoryTree </> b -> RemoteTree </> b
 c <@/> p = host c </> p
 
--- | Append a 'Path' to a directory under 'home'.
-(<~/>) :: Path Orphan Directory e -> Path Orphan n e -> Path Home n e
-p <~/> p' = home </> p </> p'
-
 -- | Append a file extension to a file 'Path'.
-(<.>) :: Path r File e -> Component e -> Path r File e
-p <.> c = Extension p c
-
--- | An \"orphan\" directory has no 'Reference' point.
-orphan :: Path Orphan Directory e
-orphan = OrphanDirectory
+(<.>) :: a </> File -> Component -> a </> File
+a <.> e = ext e . a
 
 -- | The root directory.
-root :: Path Root Directory e
+root :: RootTree </> DirectoryTree
 root = RootDirectory
 
 -- | A drive letter / device name.
-drive :: Component e -> Path Drive Directory e
+drive :: Component -> DriveTree </> DirectoryTree
 drive = DriveName
 
 -- | A remote host.
-host :: Component e -> Path Remote Directory e
+host :: Component -> RemoteTree </> DirectoryTree
 host = HostName
 
 -- | The home directory of the current user.
-home :: Path Home Directory e
+home :: HomeTree </> DirectoryTree
 home = HomeDirectory
 
 -- | The current working directory.
-cwd :: Path Working Directory e
+cwd :: WorkingTree </> DirectoryTree
 cwd = WorkingDirectory
 
 -- | A directory.
-dir :: Component e -> Path Orphan Directory e
+dir :: Component -> DirectoryTree </> DirectoryTree
 dir = DirectoryName
 
 -- | A file name.
-file :: Component e -> Path Orphan File e
+file :: Component -> DirectoryTree </> File
 file = FileName
+
+-- | A file extension.
+ext :: Component -> File </> File
+ext = FileExtension
