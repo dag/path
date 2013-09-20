@@ -49,8 +49,8 @@ data Path :: Node -> Node -> * where
     HostName :: !Component -> RemoteTree </> DirectoryTree
     HomeDirectory :: HomeTree </> DirectoryTree
     WorkingDirectory :: WorkingTree </> DirectoryTree
-    DirectoryName :: !Component -> Tree t </> DirectoryTree
-    FileName :: !Component -> Tree t </> File
+    DirectoryName :: !Component -> Tree r </> DirectoryTree
+    FileName :: !Component -> Tree r </> File
     FileExtension :: !Component -> File </> File
 
 deriving instance Show (Path a b)
