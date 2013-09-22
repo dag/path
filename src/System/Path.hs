@@ -1,9 +1,29 @@
+{-# LANGUAGE ExplicitNamespaces #-}
+{-# LANGUAGE Trustworthy #-}
+
 -- |
 -- Maintainer: dag.odenhall@gmail.com
--- Stability: internal
+-- Stability: experimental
 -- Portability: non-portable
 module System.Path
-    ( module System.Path.Internal
+    ( -- * Types
+      type (</>)
+    , Path
+    , Node(..)
+    , Name(..)
+      -- * Combinators
+    , root
+    , drive
+    , host
+    , home
+    , cwd
+    , dir
+    , file
+    , ext
+      -- * Operators
+    , (</>)
+    , (<:/>)
+    , (<.>)
     ) where
 
 import System.Path.Internal

@@ -1,7 +1,10 @@
+{-# OPTIONS_HADDOCK not-home #-}
+
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE KindSignatures #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -13,25 +16,31 @@
 -- Portability: non-portable
 module System.Path.Internal where
 
-import Control.Applicative ((<$>), (<*>), pure)
+import Control.Applicative ((<$>))
 import Data.ByteString (ByteString)
-import Data.ByteString.Lazy.Builder (byteString, char7)
-import Data.Monoid (Monoid(..), (<>))
+import Data.Monoid (Monoid(..), Endo(..), (<>))
 import Data.String (IsString(..))
 import Data.Text (Text)
 import Data.Text.Encoding.Locale (encodeLocale', decodeLocale')
-import Data.Text.Lazy.Builder (fromText)
 import GHC.IO.Encoding (getLocaleEncoding)
 import GHC.IO.Handle (noNewlineTranslation)
 import Prelude hiding ((.), id)
-import qualified Data.ByteString.Lazy.Builder as ByteString
-import qualified Data.Text.Lazy.Builder as Text
+import qualified Data.ByteString as ByteString
+import qualified Data.Text as Text
+import qualified Data.Text.Encoding as Text
 import qualified Prelude
-import qualified System.Posix.ByteString as Posix
 
--- * Types
+#ifdef __POSIX__
+import qualified System.Posix.ByteString as ByteString
+import qualified System.Posix.FilePath as ByteString
+#else
+import qualified System.Directory as String
+import qualified System.FilePath as String
+#endif
 
--- | Poly-kinded @Category@.
+-- * Category
+
+-- | Kind-polymorphic @Category@ for GHC @<7.8@.
 class Category cat where
     id :: cat a a
     (.) :: cat b c -> cat a b -> cat a c
@@ -40,24 +49,32 @@ instance Category (->) where
     id = Prelude.id
     (.) = (Prelude..)
 
--- | Abstract path morphisms.
+-- * Path
+
+-- | Infix 'Path' type operator.
+type (</>) = Path
+
+-- | The types of valid 'Path' nodes.
+data Node = Root | Drive | Remote | Home | Working | Directory | File
+
+-- | An abstract path, connecting two 'Node' types together.
 data Path :: Node -> Node -> * where
     Edge :: a </> a
     Path :: a </> b -> b </> c -> a </> c
-    RootDirectory :: RootTree </> DirectoryTree
-    DriveName :: !Component -> DriveTree </> DirectoryTree
-    HostName :: !Component -> RemoteTree </> DirectoryTree
-    HomeDirectory :: HomeTree </> DirectoryTree
-    WorkingDirectory :: WorkingTree </> DirectoryTree
-    DirectoryName :: !Component -> Tree r </> DirectoryTree
-    FileName :: !Component -> Tree r </> File
-    FileExtension :: !Component -> File </> File
+    RootDirectory :: Root </> Directory
+    DriveName :: !Name -> Drive </> Directory
+    HostName :: !Name -> Remote </> Directory
+    HomeDirectory :: Home </> Directory
+    WorkingDirectory :: Working </> Directory
+    DirectoryName :: !Name -> Directory </> Directory
+    FileName :: !Name -> a </> File
+    FileExtension :: !Name -> File </> File
 
 deriving instance Show (Path a b)
 
 instance (b ~ a) => Monoid (Path a b) where
     mempty = id
-    mappend = (.)
+    mappend = (</>)
 
 instance Category Path where
     id = Edge
@@ -65,163 +82,236 @@ instance Category Path where
     b . Edge = b
     b . a = Path a b
 
-instance (a ~ DirectoryTree, b ~ a) => IsString (Path a b) where
+instance (a ~ Directory, b ~ a) => IsString (Path a b) where
     fromString = dir . fromString
 
--- | Infix type operator for 'Path'.
-type (</>) = Path
+-- | Named components of a path, to be either encoded or decoded as
+-- appropriate, or taken verbatim.
+data Name = ByteString !ByteString | Text !Text deriving (Show)
 
--- | An abstract directory tree, not anchored to any root reference.
-type DirectoryTree = Tree Directory
-
--- | The root directory tree on a POSIX filesystem.
-type RootTree = Tree Root
-
--- | The root directory tree of a drive on a Windows filesystem.
-type DriveTree = Tree Drive
-
--- | The root directory tree on a remote machine.
-type RemoteTree = Tree Remote
-
--- | The home directory tree of the current user.
-type HomeTree = Tree Home
-
--- | The current working directory tree.
-type WorkingTree = Tree Working
-
--- | Data kind representing whether a 'Path' is absolute or relative, and in
--- reference to what, if anything.
-data Reference = Directory | Root | Drive | Remote | Home | Working
-
--- | Data kind representing whether a 'Path' is a leaf ('File') or a branch
--- ('Tree').
-data Node = File | Tree Reference
-
--- | Components of a 'Path' can either be raw bytes, or unicode using the
--- system locale encoding.
-data Component = ByteString !ByteString | Text !Text deriving Show
-
-instance IsString Component where
+instance IsString Name where
     fromString = Text . fromString
 
--- * Operations
+-- | The directories of a 'Path'.
+dirPath :: a </> b -> Directory </> Directory
+dirPath (Path a b) = dirPath a </> dirPath b
+dirPath (DirectoryName c) = DirectoryName c
+dirPath _ = id
 
--- | Build a POSIX-compatible absolute path.
-posix :: (Posix r) => Tree r </> b -> IO ByteString.Builder
-posix path = do
-    locale <- getLocaleEncoding
-    let encode (ByteString b) = pure (byteString b)
-        encode (Text t) =
-            byteString <$> encodeLocale' locale noNewlineTranslation t
-        build :: a </> b -> IO ByteString.Builder
-        build = \case
-            Edge -> pure mempty
-            Path a b -> mappend <$> build a <*> build b
-            RootDirectory -> pure (char7 '/')
-            DriveName c -> do
-                b <- encode c
-                return (char7 '/' <> b <> char7 ':')
-            HostName c -> mappend <$> encode c <*> pure (char7 ':')
-            HomeDirectory -> do
-                Just homeDir <- Posix.getEnv "HOME"
-                return (byteString homeDir <> char7 '/')
-            WorkingDirectory -> do
-                workingDir <- Posix.getWorkingDirectory
-                return (byteString workingDir <> char7 '/')
-            DirectoryName c -> mappend <$> encode c <*> pure (char7 '/')
-            FileName c -> encode c
-            FileExtension c -> mappend <$> pure (char7 '.') <*> encode c
-    build path
-
--- | References that we can resolve on a POSIX system.
-class Posix (r :: Reference)
-instance Posix Directory
-instance Posix Root
-instance Posix Home
-instance Posix Working
-
--- | Build a Windows-compatible absolute path.
-windows :: (Windows r) => Tree r </> b -> IO Text.Builder
-windows path = do
-    locale <- getLocaleEncoding
-    let decode (ByteString b) =
-            fromText <$> decodeLocale' locale noNewlineTranslation b
-        decode (Text t) = pure (fromText t)
-        build :: a </> b -> IO Text.Builder
-        build = \case
-            Edge -> pure mempty
-            Path a b -> mappend <$> build a <*> build b
-            RootDirectory -> pure "\\"
-            DriveName c -> mappend <$> decode c <*> pure ":\\"
-            HostName c -> do
-                b <- decode c
-                return ("\\\\" <> b <> "\\")
-            HomeDirectory -> do
-                Just homeDir <- Posix.getEnv "HOME"
-                b <- decode (ByteString homeDir)
-                return (b <> "\\")
-            WorkingDirectory -> do
-                workingDir <- Posix.getWorkingDirectory
-                b <- decode (ByteString workingDir)
-                return (b <> "\\")
-            DirectoryName c -> mappend <$> decode c <*> pure "\\"
-            FileName c -> decode c
-            FileExtension c -> mappend <$> pure "." <*> decode c
-    build path
-
--- | References that we can resolve on a Windows system.
-class Windows (r :: Reference)
-instance Windows Directory
-instance Windows Drive
-instance Windows Home
-instance Windows Working
+-- | The file names and extensions of a 'Path'.
+filePath :: a </> b -> File </> File
+filePath (Path a b) = filePath a </> filePath b
+filePath (FileName c) = FileName c
+filePath p@(FileExtension _) = p
+filePath _ = id
 
 -- * Combinators
 
--- | Append a 'Path' to a directory.
+-- | Join two paths together.
 (</>) :: a </> b -> b </> c -> a </> c
 (</>) = flip (.)
 
 -- | Append a 'Path' to a 'drive' name.
-(<:/>) :: Component -> DirectoryTree </> b -> DriveTree </> b
+(<:/>) :: Name -> Directory </> b -> Drive </> b
 d <:/> b = drive d </> b
 
--- | Append a 'Path' to a 'host' name.
-(<@/>) :: Component -> DirectoryTree </> b -> RemoteTree </> b
-c <@/> p = host c </> p
-
 -- | Append a file extension to a file 'Path'.
-(<.>) :: a </> File -> Component -> a </> File
+(<.>) :: a </> File -> Name -> a </> File
 a <.> e = ext e . a
 
 -- | The root directory.
-root :: RootTree </> DirectoryTree
+root :: Root </> Directory
 root = RootDirectory
 
 -- | A drive letter / device name.
-drive :: Component -> DriveTree </> DirectoryTree
+drive :: Name -> Drive </> Directory
 drive = DriveName
 
 -- | A remote host.
-host :: Component -> RemoteTree </> DirectoryTree
+host :: Name -> Remote </> Directory
 host = HostName
 
 -- | The home directory of the current user.
-home :: HomeTree </> DirectoryTree
+home :: Home </> Directory
 home = HomeDirectory
 
 -- | The current working directory.
-cwd :: WorkingTree </> DirectoryTree
+cwd :: Working </> Directory
 cwd = WorkingDirectory
 
 -- | A directory.
-dir :: Component -> DirectoryTree </> DirectoryTree
+dir :: Name -> Directory </> Directory
 dir = DirectoryName
 
 -- | A file name.
-file :: Component -> DirectoryTree </> File
+file :: Name -> a </> File
 file = FileName
 
 -- | A file extension.
-ext :: Component -> File </> File
+ext :: Name -> File </> File
 ext = FileExtension
+
+-- * Builder
+
+-- | Difference list monoid for assembling chunks efficiently.
+newtype Builder = Builder (Endo [Chunk]) deriving (Monoid)
+
+instance Show Builder where
+    show = show . decodeUtf8
+
+-- | Segments of a path representation.
+data Chunk
+    = Latin !ByteString
+      -- ^ Pass-through on encode; decode as latin1.
+    | Bytes !ByteString
+      -- ^ Pass-through on encode; decode as appropriate.
+    | Unicode !Text
+      -- ^ Encode as appropriate; pass-through on decode.
+  deriving (Show)
+
+-- | The singleton 'Builder' primitive.
+chunk :: Chunk -> Builder
+chunk c = Builder (Endo (c :))
+
+-- | Construct a 'Builder' for a 'Latin' 'Chunk'.
+latin :: ByteString -> Builder
+latin = chunk . Latin
+
+-- | Construct a 'Builder' for a 'Bytes' 'Chunk'.
+bytes :: ByteString -> Builder
+bytes = chunk . Bytes
+
+-- | Construct a 'Builder' for a 'Unicode' 'Chunk'.
+unicode :: Text -> Builder
+unicode = chunk . Unicode
+
+-- | Construct a 'Builder' for a 'Unicode' 'Chunk' from a 'String'.
+string :: String -> Builder
+string = unicode . Text.pack
+
+-- | Construct a 'Builder' from mapping a 'Name' component to a 'Chunk'.
+name :: Name -> Builder
+name (ByteString b) = bytes b
+name (Text t) = unicode t
+
+-- | Apply a 'Builder' to construct the final 'Chunk' list.
+runBuilder :: Builder -> [Chunk]
+runBuilder (Builder endo) = appEndo endo []
+
+#ifdef __POSIX__
+-- | Split a 'ByteString.RawFilePath' into chunks of separators and components.
+splitDirectories :: ByteString -> Builder
+splitDirectories b
+    | ByteString.isAbsolute b = latin "/" <> mconcat
+        [ bytes d <> latin "/" | d <- tail (ByteString.splitDirectories b) ]
+    | otherwise = mconcat
+        [ bytes d <> latin "/" | d <- ByteString.splitDirectories b ]
+#endif
+
+-- * Representations
+
+-- | Syntax for representing a path in readable form.
+data Representation = Posix | Windows
+
+-- | The native 'Representation' of the platform.
+native :: Representation
+#ifdef __WINDOWS__
+native = Windows
+#else
+native = Posix
+#endif
+
+-- | Render a 'Path' to a 'Representation' intended for humans.
+render :: Representation -> a </> b -> Builder
+render _ Edge = mempty
+render r (Path a b) = render r a <> render r b
+render Posix RootDirectory = latin "/"
+render Windows RootDirectory = unicode "\\"
+render Posix (DriveName n) = latin "/" <> name n <> latin ":" <> latin "/"
+render Windows (DriveName n) = name n <> unicode ":\\"
+render Posix (HostName n) = name n <> latin ":" <> latin "/"
+render Windows (HostName n) = unicode "\\\\" <> name n <> unicode "\\"
+render Posix HomeDirectory = latin "~" <> latin "/"
+render Windows HomeDirectory = unicode "%UserProfile%\\"
+render Posix WorkingDirectory = latin "." <> latin "/"
+render Windows WorkingDirectory = unicode ".\\"
+render Posix (DirectoryName n) = name n <> latin "/"
+render Windows (DirectoryName n) = name n <> unicode "\\"
+render _ (FileName n) = name n
+render Posix (FileExtension n) = latin "." <> name n
+render Windows (FileExtension n) = unicode "." <> name n
+
+-- | Render the 'Directory' and 'File' parts of a 'Path' to the native
+-- 'Representation' intended for machines.
+path :: a </> b -> Builder
+path p = render native (dirPath p) <> render native (filePath p)
+
+-- * Encodings
+
+-- | Encode the 'Unicode' chunks in a 'Builder' using the system locale.
+encodeLocale :: Builder -> IO ByteString
+encodeLocale builder = do
+    locale <- getLocaleEncoding
+    let c (Latin b) = return b
+        c (Bytes b) = return b
+        c (Unicode t) = encodeLocale' locale noNewlineTranslation t
+    ByteString.concat <$> mapM c (runBuilder builder)
+
+-- | Encode the 'Unicode' chunks in a 'Builder' with UTF-8.
+encodeUtf8 :: Builder -> ByteString
+encodeUtf8 = ByteString.concat . map c . runBuilder where
+    c (Latin b) = b
+    c (Bytes b) = b
+    c (Unicode t) = Text.encodeUtf8 t
+
+-- | Decode the 'Bytes' chunks in a 'Builder' using the system locale.
+decodeLocale :: Builder -> IO Text
+decodeLocale builder = do
+    locale <- getLocaleEncoding
+    let c (Latin b) = return (Text.decodeLatin1 b)
+        c (Bytes b) = decodeLocale' locale noNewlineTranslation b
+        c (Unicode t) = return t
+    Text.concat <$> mapM c (runBuilder builder)
+
+-- | Decode the 'Bytes' chunks in a 'Builder' with UTF-8.
+decodeUtf8 :: Builder -> Text
+decodeUtf8 = Text.concat . map c . runBuilder where
+    c (Latin b) = Text.decodeLatin1 b
+    c (Bytes b) = Text.decodeUtf8 b
+    c (Unicode t) = t
+
+-- * Resolve
+
+-- | Build an absolute path by resolving the initial 'Node' if possible.
+class Resolve (a :: Node) where
+    resolve :: a </> b -> IO Builder
+
+#ifndef __WINDOWS__
+instance Resolve Root where
+    resolve = return . render Posix
+#endif
+
+#ifdef __WINDOWS__
+instance Resolve Drive where
+    resolve = return . render Windows
+#endif
+
+instance Resolve Home where
+    resolve p = do
+#ifdef __POSIX__
+        Just homeDir <- ByteString.getEnv "HOME"
+        return (splitDirectories homeDir <> path p)
+#else
+        homeDir <- String.getHomeDirectory
+        return (string (String.addTrailingPathSeparator homeDir) <> path p)
+#endif
+
+instance Resolve Working where
+    resolve p = do
+#ifdef __POSIX__
+        workingDir <- ByteString.getWorkingDirectory
+        return (splitDirectories workingDir <> path p)
+#else
+        workingDir <- String.getCurrentDirectory
+        return (string (String.addTrailingPathSeparator workingDir) <> path p)
+#endif
