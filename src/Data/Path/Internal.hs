@@ -13,7 +13,7 @@
 -- Maintainer: dag.odenhall@gmail.com
 -- Stability: internal
 -- Portability: non-portable
-module System.Path.Internal where
+module Data.Path.Internal where
 
 import Control.Applicative ((<$>))
 import Data.ByteString (ByteString)

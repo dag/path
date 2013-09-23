@@ -5,7 +5,7 @@
 -- Maintainer: dag.odenhall@gmail.com
 -- Stability: experimental
 -- Portability: non-portable
-module System.Path
+module Data.Path
     ( -- * Types
       type (</>)
     , Path(..)
@@ -26,4 +26,4 @@ module System.Path
     , (<.>)
     ) where
 
-import System.Path.Internal
+import Data.Path.Internal
