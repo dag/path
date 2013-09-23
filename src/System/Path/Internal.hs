@@ -74,8 +74,8 @@ instance IsString Name where
 (</>) = Path
 
 -- | Append a 'Path' to a 'drive' name.
-(<:/>) :: Name -> Directory </> b -> Drive </> b
-n <:/> b = drive n </> b
+(<:>) :: Name -> Directory </> b -> Drive </> b
+n <:> b = drive n </> b
 
 -- | Append a file extension to a file 'Path'.
 (<.>) :: a </> File -> Name -> a </> File

@@ -22,7 +22,7 @@ module System.Path
     , ext
       -- * Operators
     , (</>)
-    , (<:/>)
+    , (<:>)
     , (<.>)
     ) where
 
