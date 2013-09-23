@@ -278,7 +278,7 @@ instance Resolve Home where
     resolve p = do
 #ifdef __POSIX__
         Just homeDir <- ByteString.getEnv "HOME"
-        return (unix homeDir <> path p)
+        return (unix (ByteString.addTrailingPathSeparator homeDir) <> path p)
 #else
         homeDir <- String.getHomeDirectory
         return (string (String.addTrailingPathSeparator homeDir) <> path p)
@@ -288,7 +288,7 @@ instance Resolve Working where
     resolve p = do
 #ifdef __POSIX__
         workingDir <- ByteString.getWorkingDirectory
-        return (unix workingDir <> path p)
+        return (unix (ByteString.addTrailingPathSeparator workingDir) <> path p)
 #else
         workingDir <- String.getCurrentDirectory
         return (string (String.addTrailingPathSeparator workingDir) <> path p)
