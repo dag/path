@@ -8,7 +8,7 @@
 module System.Path
     ( -- * Types
       type (</>)
-    , Path
+    , Path(..)
     , Node(..)
     , Name(..)
       -- * Combinators
