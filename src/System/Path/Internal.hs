@@ -6,7 +6,6 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeOperators #-}
 
@@ -24,11 +23,9 @@ import Data.Text (Text)
 import Data.Text.Encoding.Locale (encodeLocale', decodeLocale')
 import GHC.IO.Encoding (getLocaleEncoding)
 import GHC.IO.Handle (noNewlineTranslation)
-import Prelude hiding ((.), id)
 import qualified Data.ByteString as ByteString
 import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
-import qualified Prelude
 
 #ifdef __POSIX__
 import qualified System.Posix.ByteString as ByteString
@@ -37,17 +34,6 @@ import qualified System.Posix.FilePath as ByteString
 import qualified System.Directory as String
 import qualified System.FilePath as String
 #endif
-
--- * Category
-
--- | Kind-polymorphic @Category@ for GHC @<7.8@.
-class Category cat where
-    id :: cat a a
-    (.) :: cat b c -> cat a b -> cat a c
-
-instance Category (->) where
-    id = Prelude.id
-    (.) = (Prelude..)
 
 -- * Path
 
@@ -59,7 +45,6 @@ data Node = Root | Drive | Remote | Home | Working | Directory | File
 
 -- | An abstract path, connecting two 'Node' types together.
 data Path :: Node -> Node -> * where
-    Edge :: a </> a
     Path :: a </> b -> b </> c -> a </> c
     RootDirectory :: Root </> Directory
     DriveName :: !Name -> Drive </> Directory
@@ -71,16 +56,6 @@ data Path :: Node -> Node -> * where
     FileExtension :: !Name -> File </> File
 
 deriving instance Show (Path a b)
-
-instance (b ~ a) => Monoid (Path a b) where
-    mempty = id
-    mappend = (</>)
-
-instance Category Path where
-    id = Edge
-    Edge . a = a
-    b . Edge = b
-    b . a = Path a b
 
 instance (a ~ Directory, b ~ a) => IsString (Path a b) where
     fromString = dir . fromString
@@ -96,15 +71,15 @@ instance IsString Name where
 
 -- | Join two paths together.
 (</>) :: a </> b -> b </> c -> a </> c
-(</>) = flip (.)
+(</>) = Path
 
 -- | Append a 'Path' to a 'drive' name.
 (<:/>) :: Name -> Directory </> b -> Drive </> b
-d <:/> b = drive d </> b
+n <:/> b = drive n </> b
 
 -- | Append a file extension to a file 'Path'.
 (<.>) :: a </> File -> Name -> a </> File
-a <.> e = ext e . a
+a <.> n = a </> ext n
 
 -- | The root directory.
 root :: Root </> Directory
@@ -210,7 +185,6 @@ native = Posix
 
 -- | Render a 'Path' to a 'Representation' intended for humans.
 render :: Representation -> a </> b -> Builder
-render _ Edge = mempty
 render r (Path a b) = render r a <> render r b
 render Posix RootDirectory = latin "/"
 render Windows RootDirectory = unicode "\\"

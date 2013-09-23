@@ -33,7 +33,6 @@ LIBRARY
     other-extensions: GeneralizedNewtypeDeriving
     other-extensions: KindSignatures
     other-extensions: OverloadedStrings
-    other-extensions: PolyKinds
     other-extensions: StandaloneDeriving
     other-extensions: Trustworthy
     other-extensions: TypeOperators
