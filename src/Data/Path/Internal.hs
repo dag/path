@@ -123,7 +123,9 @@ instance Show Builder where
 
 -- | Segments of a path representation.
 data Chunk
-    = Latin !ByteString
+    = Unix !ByteString
+      -- ^ Pass-through on encode; decode as POSIX path.
+    | Latin !ByteString
       -- ^ Pass-through on encode; decode as latin1.
     | Bytes !ByteString
       -- ^ Pass-through on encode; decode as appropriate.
@@ -134,6 +136,10 @@ data Chunk
 -- | The singleton 'Builder' primitive.
 chunk :: Chunk -> Builder
 chunk c = Builder (Endo (c :))
+
+-- | Construct a 'Builder' for a 'Unix' 'Chunk'.
+unix :: ByteString -> Builder
+unix = chunk . Unix
 
 -- | Construct a 'Builder' for a 'Latin' 'Chunk'.
 latin :: ByteString -> Builder
@@ -159,16 +165,6 @@ name (Text t) = unicode t
 -- | Apply a 'Builder' to construct the final 'Chunk' list.
 runBuilder :: Builder -> [Chunk]
 runBuilder (Builder endo) = appEndo endo []
-
-#ifdef __POSIX__
--- | Split a 'ByteString.RawFilePath' into chunks of separators and components.
-splitDirectories :: ByteString -> Builder
-splitDirectories b
-    | ByteString.isAbsolute b = latin "/" <> mconcat
-        [ bytes d <> latin "/" | d <- tail (ByteString.splitDirectories b) ]
-    | otherwise = mconcat
-        [ bytes d <> latin "/" | d <- ByteString.splitDirectories b ]
-#endif
 
 -- * Representations
 
@@ -220,7 +216,8 @@ path p = case p of
 encodeLocale :: Builder -> IO ByteString
 encodeLocale builder = do
     locale <- getLocaleEncoding
-    let c (Latin b) = return b
+    let c (Unix b) = return b
+        c (Latin b) = return b
         c (Bytes b) = return b
         c (Unicode t) = encodeLocale' locale noNewlineTranslation t
     ByteString.concat <$> mapM c (runBuilder builder)
@@ -228,6 +225,7 @@ encodeLocale builder = do
 -- | Encode the 'Unicode' chunks in a 'Builder' with UTF-8.
 encodeUtf8 :: Builder -> ByteString
 encodeUtf8 = ByteString.concat . map c . runBuilder where
+    c (Unix b) = b
     c (Latin b) = b
     c (Bytes b) = b
     c (Unicode t) = Text.encodeUtf8 t
@@ -236,14 +234,26 @@ encodeUtf8 = ByteString.concat . map c . runBuilder where
 decodeLocale :: Builder -> IO Text
 decodeLocale builder = do
     locale <- getLocaleEncoding
-    let c (Latin b) = return (Text.decodeLatin1 b)
+    let c (Unix b) = decodeLocale (u b)
+        c (Latin b) = return (Text.decodeLatin1 b)
         c (Bytes b) = decodeLocale' locale noNewlineTranslation b
         c (Unicode t) = return t
     Text.concat <$> mapM c (runBuilder builder)
+  where
+#ifdef __POSIX__
+    u b
+        | ByteString.isAbsolute b = latin "/" <> mconcat
+            [ bytes d <> latin "/" | d <- tail (ByteString.splitDirectories b) ]
+        | otherwise = mconcat
+            [ bytes d <> latin "/" | d <- ByteString.splitDirectories b ]
+#else
+    u = bytes
+#endif
 
 -- | Decode the 'Bytes' chunks in a 'Builder' with UTF-8.
 decodeUtf8 :: Builder -> Text
 decodeUtf8 = Text.concat . map c . runBuilder where
+    c (Unix b) = Text.decodeUtf8 b
     c (Latin b) = Text.decodeLatin1 b
     c (Bytes b) = Text.decodeUtf8 b
     c (Unicode t) = t
@@ -268,7 +278,7 @@ instance Resolve Home where
     resolve p = do
 #ifdef __POSIX__
         Just homeDir <- ByteString.getEnv "HOME"
-        return (splitDirectories homeDir <> path p)
+        return (unix homeDir <> path p)
 #else
         homeDir <- String.getHomeDirectory
         return (string (String.addTrailingPathSeparator homeDir) <> path p)
@@ -278,7 +288,7 @@ instance Resolve Working where
     resolve p = do
 #ifdef __POSIX__
         workingDir <- ByteString.getWorkingDirectory
-        return (splitDirectories workingDir <> path p)
+        return (unix workingDir <> path p)
 #else
         workingDir <- String.getCurrentDirectory
         return (string (String.addTrailingPathSeparator workingDir) <> path p)
