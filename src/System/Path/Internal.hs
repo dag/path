@@ -67,7 +67,7 @@ data Path :: Node -> Node -> * where
     HomeDirectory :: Home </> Directory
     WorkingDirectory :: Working </> Directory
     DirectoryName :: !Name -> Directory </> Directory
-    FileName :: !Name -> a </> File
+    FileName :: !Name -> Directory </> File
     FileExtension :: !Name -> File </> File
 
 deriving instance Show (Path a b)
@@ -91,19 +91,6 @@ data Name = ByteString !ByteString | Text !Text deriving (Show)
 
 instance IsString Name where
     fromString = Text . fromString
-
--- | The directories of a 'Path'.
-dirPath :: a </> b -> Directory </> Directory
-dirPath (Path a b) = dirPath a </> dirPath b
-dirPath (DirectoryName c) = DirectoryName c
-dirPath _ = id
-
--- | The file names and extensions of a 'Path'.
-filePath :: a </> b -> File </> File
-filePath (Path a b) = filePath a </> filePath b
-filePath (FileName c) = FileName c
-filePath p@(FileExtension _) = p
-filePath _ = id
 
 -- * Combinators
 
@@ -144,7 +131,7 @@ dir :: Name -> Directory </> Directory
 dir = DirectoryName
 
 -- | A file name.
-file :: Name -> a </> File
+file :: Name -> Directory </> File
 file = FileName
 
 -- | A file extension.
@@ -241,10 +228,17 @@ render _ (FileName n) = name n
 render Posix (FileExtension n) = latin "." <> name n
 render Windows (FileExtension n) = unicode "." <> name n
 
--- | Render the 'Directory' and 'File' parts of a 'Path' to the native
+-- | Render only the 'Directory' and 'File' nodes of a 'Path' to the native
 -- 'Representation' intended for machines.
 path :: a </> b -> Builder
-path p = render native (dirPath p) <> render native (filePath p)
+path p = case p of
+    Path a b -> path a <> path b
+    DirectoryName _ -> r p
+    FileName _ -> r p
+    FileExtension _ -> r p
+    _ -> mempty
+  where
+    r = render native
 
 -- * Encodings
 
