@@ -26,8 +26,8 @@ module Data.Path
     , (<.>)
       -- * PathName
     , PathName
-      -- ** Resolve
-    , Resolve(..)
+      -- ** Reify
+    , Reify(..)
     ) where
 
 import Data.Path.Internal

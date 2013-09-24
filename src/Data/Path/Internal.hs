@@ -233,24 +233,24 @@ locale builder = do
     PathName . Text.unpack . Text.concat <$> mapM c (runBuilder builder)
 #endif
 
--- * Resolve
+-- * Reify
 
--- | Resolve an abstract 'Path' to a concrete 'PathName'.
-class Resolve (a :: Component) where
-    resolve :: a </> b -> IO PathName
+-- | Reify an abstract 'Path' to a concrete 'PathName'.
+class Reify (a :: Component) where
+    reify :: a </> b -> IO PathName
 
 #ifndef __WINDOWS__
-instance Resolve Root where
-    resolve = locale . render Posix
+instance Reify Root where
+    reify = locale . render Posix
 #endif
 
 #ifdef __WINDOWS__
-instance Resolve Drive where
-    resolve = locale . render Windows
+instance Reify Drive where
+    reify = locale . render Windows
 #endif
 
-instance Resolve Home where
-    resolve p = do
+instance Reify Home where
+    reify p = do
 #ifdef __POSIX__
         Just homeDir <- Posix.getEnv "HOME"
 #else
@@ -259,8 +259,8 @@ instance Resolve Home where
         pathName <- locale (path p)
         return (PathName homeDir <> pathName)
 
-instance Resolve Working where
-    resolve p = do
+instance Reify Working where
+    reify p = do
 #ifdef __POSIX__
         workingDir <- Posix.getWorkingDirectory
 #else
