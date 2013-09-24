@@ -40,11 +40,11 @@ import qualified System.FilePath as String
 -- | Infix 'Path' type operator.
 type (</>) = Path
 
--- | The types of valid 'Path' nodes.
-data Node = Root | Drive | Remote | Home | Working | Directory | File
+-- | Components of a 'Path'.
+data Component = Root | Drive | Remote | Home | Working | Directory | File
 
--- | An abstract path, connecting two 'Node' types together.
-data Path :: Node -> Node -> * where
+-- | An abstract path from one 'Component' to another.
+data Path :: Component -> Component -> * where
     Path :: a </> b -> b </> c -> a </> c
     RootDirectory :: Root </> Directory
     DriveName :: !Name -> Drive </> Directory
@@ -198,8 +198,8 @@ render _ (FileName n) = name n
 render Posix (FileExtension n) = latin "." <> name n
 render Windows (FileExtension n) = unicode "." <> name n
 
--- | Render only the 'Directory' and 'File' nodes of a 'Path' to the native
--- 'Representation' intended for machines.
+-- | Render only the 'Directory' and 'File' components of a 'Path' to the
+-- native 'Representation' intended for machines.
 path :: a </> b -> Builder
 path p = case p of
     Path a b -> path a <> path b
@@ -260,8 +260,8 @@ decodeUtf8 = Text.concat . map c . runBuilder where
 
 -- * Resolve
 
--- | Build an absolute path by resolving the initial 'Node' if possible.
-class Resolve (a :: Node) where
+-- | Build an absolute path by resolving the initial 'Component' if possible.
+class Resolve (a :: Component) where
     resolve :: a </> b -> IO Builder
 
 #ifndef __WINDOWS__

@@ -9,7 +9,7 @@ module Data.Path
     ( -- * Types
       type (</>)
     , Path(..)
-    , Node(..)
+    , Component(..)
     , Name(..)
       -- * Combinators
     , root
