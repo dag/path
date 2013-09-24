@@ -253,22 +253,18 @@ instance Resolve Home where
     resolve p = do
 #ifdef __POSIX__
         Just homeDir <- Posix.getEnv "HOME"
-        encoded <- locale (path p)
-        return (PathName homeDir <> encoded)
 #else
         homeDir <- FilePath.getHomeDirectory
-        decoded <- locale (path p)
-        return (PathName homeDir <> decoded)
 #endif
+        pathName <- locale (path p)
+        return (PathName homeDir <> pathName)
 
 instance Resolve Working where
     resolve p = do
 #ifdef __POSIX__
         workingDir <- Posix.getWorkingDirectory
-        encoded <- locale (path p)
-        return (PathName workingDir <> encoded)
 #else
         workingDir <- FilePath.getCurrentDirectory
-        decoded <- locale (path p)
-        return (PathName workingDir <> decoded)
 #endif
+        pathName <- locale (path p)
+        return (PathName workingDir <> pathName)
