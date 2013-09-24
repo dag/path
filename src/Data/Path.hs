@@ -6,12 +6,12 @@
 -- Stability: experimental
 -- Portability: non-portable
 module Data.Path
-    ( -- * Types
+    ( -- * Path
       type (</>)
     , Path(..)
     , Component(..)
     , Name(..)
-      -- * Combinators
+      -- ** Combinators
     , root
     , drive
     , host
@@ -20,10 +20,14 @@ module Data.Path
     , dir
     , file
     , ext
-      -- * Operators
+      -- ** Operators
     , (</>)
     , (<:>)
     , (<.>)
+      -- * PathName
+    , PathName
+      -- ** Resolve
+    , Resolve(..)
     ) where
 
 import Data.Path.Internal
