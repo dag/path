@@ -37,45 +37,50 @@ import qualified System.FilePath as FilePath
 
 -- * Path
 
--- | Components of a 'Path'.
-data Component = Root | Drive | Remote | Home | Working | Directory | File
+-- | 'Component' types.
+data Resource = Root | Drive | Remote | Home | Working | Directory | File
 
--- | Named components of a path, to be either encoded or decoded as
--- appropriate, or taken verbatim.
+-- | Name of a 'Component', to be encoded or decoded as appropriate.
 data Name = ByteString !ByteString | Text !Text deriving (Show)
 
 instance IsString Name where
     fromString = Text . fromString
 
--- | Path primitives.
-data Path :: Component -> Component -> * where
-    RootDirectory :: Path Root Directory
-    DriveName :: !Name -> Path Drive Directory
-    HostName :: !Name -> Path Remote Directory
-    HomeDirectory :: Path Home Directory
-    WorkingDirectory :: Path Working Directory
-    DirectoryName :: !Name -> Path Directory Directory
-    FileName :: !Name -> Path Directory File
-    FileExtension :: !Name -> Path File File
+-- | Infix 'Component' type operator.
+type (/>) = Component
+
+-- | Components of a 'Path'.
+data Component :: Resource -> Resource -> * where
+    RootDirectory :: Root /> Directory
+    DriveName :: !Name -> Drive /> Directory
+    HostName :: !Name -> Remote /> Directory
+    HomeDirectory :: Home /> Directory
+    WorkingDirectory :: Working /> Directory
+    DirectoryName :: !Name -> Directory /> Directory
+    FileName :: !Name -> Directory /> File
+    FileExtension :: !Name -> File /> File
+
+deriving instance Show (Component a b)
+
+-- | Infix 'Path' type operator.
+type (</>) = Path
+
+-- | An abstract path, linking components together.
+data Path :: Resource -> Resource -> * where
+    Component :: a /> b -> a </> b
+    Path :: a /> b -> b </> c -> a </> c
 
 deriving instance Show (Path a b)
 
--- | Abstract path as a linked list of 'Path' primitives.
-data (</>) :: Component -> Component -> * where
-    End :: a </> a
-    Path :: Path a b -> b </> c -> a </> c
-
-deriving instance Show (a </> b)
-
-instance (a ~ Directory, b ~ a) => IsString (a </> b) where
+instance (a ~ Directory, b ~ a) => IsString (Path a b) where
     fromString = dir . fromString
 
 -- * Combinators
 
 -- | Join two paths together.
 (</>) :: a </> b -> b </> c -> a </> c
-End </> b = b
-Path p a </> b = Path p (a </> b)
+Component c </> b = Path c b
+Path c a </> b = Path c (a </> b)
 
 -- | Append a path to a 'drive' name.
 (<:>) :: Name -> Directory </> b -> Drive </> b
@@ -87,35 +92,35 @@ a <.> n = a </> ext n
 
 -- | The root directory.
 root :: Root </> Directory
-root = Path RootDirectory End
+root = Component RootDirectory
 
 -- | A drive letter / device name.
 drive :: Name -> Drive </> Directory
-drive = flip Path End . DriveName
+drive = Component . DriveName
 
 -- | A remote host.
 host :: Name -> Remote </> Directory
-host = flip Path End . HostName
+host = Component . HostName
 
 -- | The home directory of the current user.
 home :: Home </> Directory
-home = flip Path End HomeDirectory
+home = Component HomeDirectory
 
 -- | The current working directory.
 cwd :: Working </> Directory
-cwd = flip Path End WorkingDirectory
+cwd = Component WorkingDirectory
 
 -- | A directory.
 dir :: Name -> Directory </> Directory
-dir = flip Path End . DirectoryName
+dir = Component . DirectoryName
 
 -- | A file name.
 file :: Name -> Directory </> File
-file = flip Path End . FileName
+file = Component . FileName
 
 -- | A file extension.
 ext :: Name -> File </> File
-ext = flip Path End . FileExtension
+ext = Component . FileExtension
 
 -- * Builder
 
@@ -170,9 +175,9 @@ native = Posix
 
 -- | Render a path to a 'Representation' intended for humans.
 render :: Representation -> a </> b -> Builder
-render _ End = mempty
-render repr (Path p a) =
-    r repr p <> render repr a
+render repr p = case p of
+    Component c -> r repr c
+    Path c a -> r repr c <> render repr a
   where
     r Posix RootDirectory = ascii "/"
     r Windows RootDirectory = unicode "\\"
@@ -190,16 +195,16 @@ render repr (Path p a) =
     r Posix (FileExtension n) = ascii "." <> name n
     r Windows (FileExtension n) = unicode "." <> name n
 
--- | Render only the 'Directory' and 'File' components of a path to the native
+-- | Render only the 'Directory' and 'File' resources of a path to the native
 -- 'Representation' intended for machines.
 path :: a </> b -> Builder
-path End = mempty
-path (Path p a) =
-    r p <> path a
+path p = case p of
+    Component c -> r c
+    Path c a -> r c <> path a
   where
-    r (DirectoryName _) = render native (Path p End)
-    r (FileName _) = render native (Path p End)
-    r (FileExtension _) = render native (Path p End)
+    r c@(DirectoryName _) = render native (Component c)
+    r c@(FileName _) = render native (Component c)
+    r c@(FileExtension _) = render native (Component c)
     r _ = mempty
 
 -- * PathName
@@ -242,8 +247,8 @@ locale builder = do
 
 -- * Reify
 
--- | Reify an abstract path to a concrete 'PathName'.
-class Reify (a :: Component) where
+-- | Reify an abstract 'Path' to a concrete 'PathName'.
+class Reify (a :: Resource) where
     reify :: a </> b -> IO PathName
 
 #ifndef __WINDOWS__

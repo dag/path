@@ -28,6 +28,7 @@ LIBRARY
 
     other-extensions: CPP
     other-extensions: DataKinds
+    other-extensions: ExplicitNamespaces
     other-extensions: GADTs
     other-extensions: GeneralizedNewtypeDeriving
     other-extensions: KindSignatures
