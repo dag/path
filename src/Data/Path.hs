@@ -30,6 +30,7 @@ module Data.Path
     , PathName
       -- ** Reify
     , Reify(..)
+    , Reifiable
     ) where
 
 import Data.Path.Internal

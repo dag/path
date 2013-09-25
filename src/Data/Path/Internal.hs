@@ -67,7 +67,7 @@ type (</>) = Path
 
 -- | An abstract path, linking components together.
 data Path :: Resource -> Resource -> * where
-    Component :: a /> b -> a </> b
+    Null :: a </> a
     Path :: a /> b -> b </> c -> a </> c
 
 deriving instance Show (Path a b)
@@ -79,7 +79,7 @@ instance (a ~ Directory, b ~ a) => IsString (Path a b) where
 
 -- | Join two paths together.
 (</>) :: a </> b -> b </> c -> a </> c
-Component c </> b = Path c b
+Null </> b = b
 Path c a </> b = Path c (a </> b)
 
 -- | Append a path to a 'drive' name.
@@ -90,37 +90,41 @@ n <:> b = drive n </> b
 (<.>) :: a </> File -> Name -> a </> File
 a <.> n = a </> ext n
 
+-- | Construct a 'Path' from a 'Component'.
+component :: a /> b -> a </> b
+component = flip Path Null
+
 -- | The root directory.
 root :: Root </> Directory
-root = Component RootDirectory
+root = component RootDirectory
 
 -- | A drive letter / device name.
 drive :: Name -> Drive </> Directory
-drive = Component . DriveName
+drive = component . DriveName
 
 -- | A remote host.
 host :: Name -> Remote </> Directory
-host = Component . HostName
+host = component . HostName
 
 -- | The home directory of the current user.
 home :: Home </> Directory
-home = Component HomeDirectory
+home = component HomeDirectory
 
 -- | The current working directory.
 cwd :: Working </> Directory
-cwd = Component WorkingDirectory
+cwd = component WorkingDirectory
 
 -- | A directory.
 dir :: Name -> Directory </> Directory
-dir = Component . DirectoryName
+dir = component . DirectoryName
 
 -- | A file name.
 file :: Name -> Directory </> File
-file = Component . FileName
+file = component . FileName
 
 -- | A file extension.
 ext :: Name -> File </> File
-ext = Component . FileExtension
+ext = component . FileExtension
 
 -- * Builder
 
@@ -175,9 +179,9 @@ native = Posix
 
 -- | Render a path to a 'Representation' intended for humans.
 render :: Representation -> a </> b -> Builder
-render repr p = case p of
-    Component c -> r repr c
-    Path c a -> r repr c <> render repr a
+render _ Null = mempty
+render repr (Path c a) =
+    r repr c <> render repr a
   where
     r Posix RootDirectory = ascii "/"
     r Windows RootDirectory = unicode "\\"
@@ -198,13 +202,13 @@ render repr p = case p of
 -- | Render only the 'Directory' and 'File' resources of a path to the native
 -- 'Representation' intended for machines.
 path :: a </> b -> Builder
-path p = case p of
-    Component c -> r c
-    Path c a -> r c <> path a
+path Null = mempty
+path (Path c a) =
+    r c <> path a
   where
-    r c@(DirectoryName _) = render native (Component c)
-    r c@(FileName _) = render native (Component c)
-    r c@(FileExtension _) = render native (Component c)
+    r (DirectoryName _) = render native (component c)
+    r (FileName _) = render native (component c)
+    r (FileExtension _) = render native (component c)
     r _ = mempty
 
 -- * PathName
@@ -247,9 +251,17 @@ locale builder = do
 
 -- * Reify
 
+-- | 'Resource' types that we can 'reify'.  This is necessary to prevent things
+-- like @reify (Null :: Drive \</\> Drive)@ which would otherwise type-check
+-- and return an empty 'PathName', which isn't a valid file path and certainly
+-- not the name of a 'drive'.
+class Reifiable (b :: Resource)
+instance Reifiable Directory
+instance Reifiable File
+
 -- | Reify an abstract 'Path' to a concrete 'PathName'.
-class Reify (a :: Resource) where
-    reify :: a </> b -> IO PathName
+class Reify a where
+    reify :: (Reifiable b) => a </> b -> IO PathName
 
 #ifndef __WINDOWS__
 instance Reify Root where
