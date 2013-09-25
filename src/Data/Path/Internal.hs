@@ -37,28 +37,8 @@ import qualified System.FilePath as FilePath
 
 -- * Path
 
--- | Infix 'Path' type operator.
-type (</>) = Path
-
 -- | Components of a 'Path'.
 data Component = Root | Drive | Remote | Home | Working | Directory | File
-
--- | An abstract path from one 'Component' to another.
-data Path :: Component -> Component -> * where
-    Path :: a </> b -> b </> c -> a </> c
-    RootDirectory :: Root </> Directory
-    DriveName :: !Name -> Drive </> Directory
-    HostName :: !Name -> Remote </> Directory
-    HomeDirectory :: Home </> Directory
-    WorkingDirectory :: Working </> Directory
-    DirectoryName :: !Name -> Directory </> Directory
-    FileName :: !Name -> Directory </> File
-    FileExtension :: !Name -> File </> File
-
-deriving instance Show (Path a b)
-
-instance (a ~ Directory, b ~ a) => IsString (Path a b) where
-    fromString = dir . fromString
 
 -- | Named components of a path, to be either encoded or decoded as
 -- appropriate, or taken verbatim.
@@ -67,51 +47,75 @@ data Name = ByteString !ByteString | Text !Text deriving (Show)
 instance IsString Name where
     fromString = Text . fromString
 
+-- | Path primitives.
+data Path :: Component -> Component -> * where
+    RootDirectory :: Path Root Directory
+    DriveName :: !Name -> Path Drive Directory
+    HostName :: !Name -> Path Remote Directory
+    HomeDirectory :: Path Home Directory
+    WorkingDirectory :: Path Working Directory
+    DirectoryName :: !Name -> Path Directory Directory
+    FileName :: !Name -> Path Directory File
+    FileExtension :: !Name -> Path File File
+
+deriving instance Show (Path a b)
+
+-- | Abstract path as a linked list of 'Path' primitives.
+data (</>) :: Component -> Component -> * where
+    End :: a </> a
+    Path :: Path a b -> b </> c -> a </> c
+
+deriving instance Show (a </> b)
+
+instance (a ~ Directory, b ~ a) => IsString (a </> b) where
+    fromString = dir . fromString
+
 -- * Combinators
 
 -- | Join two paths together.
 (</>) :: a </> b -> b </> c -> a </> c
-(</>) = Path
+End </> b = b
+Path p a </> b = Path p (a </> b)
 
--- | Append a 'Path' to a 'drive' name.
+-- | Append a path to a 'drive' name.
 (<:>) :: Name -> Directory </> b -> Drive </> b
 n <:> b = drive n </> b
 
--- | Append a file extension to a file 'Path'.
+-- | Append a file extension to a file path.
 (<.>) :: a </> File -> Name -> a </> File
 a <.> n = a </> ext n
 
 -- | The root directory.
 root :: Root </> Directory
-root = RootDirectory
+root = Path RootDirectory End
 
 -- | A drive letter / device name.
 drive :: Name -> Drive </> Directory
-drive = DriveName
+drive = flip Path End . DriveName
 
 -- | A remote host.
 host :: Name -> Remote </> Directory
-host = HostName
+host = flip Path End . HostName
 
 -- | The home directory of the current user.
 home :: Home </> Directory
-home = HomeDirectory
+home = flip Path End HomeDirectory
 
 -- | The current working directory.
 cwd :: Working </> Directory
-cwd = WorkingDirectory
+cwd = flip Path End WorkingDirectory
 
 -- | A directory.
 dir :: Name -> Directory </> Directory
-dir = DirectoryName
+dir = flip Path End . DirectoryName
 
 -- | A file name.
 file :: Name -> Directory </> File
-file = FileName
+file = flip Path End . FileName
 
 -- | A file extension.
 ext :: Name -> File </> File
-ext = FileExtension
+ext = flip Path End . FileExtension
 
 -- * Builder
 
@@ -164,36 +168,39 @@ native = Windows
 native = Posix
 #endif
 
--- | Render a 'Path' to a 'Representation' intended for humans.
+-- | Render a path to a 'Representation' intended for humans.
 render :: Representation -> a </> b -> Builder
-render r (Path a b) = render r a <> render r b
-render Posix RootDirectory = ascii "/"
-render Windows RootDirectory = unicode "\\"
-render Posix (DriveName n) = ascii "/" <> name n <> ascii ":" <> ascii "/"
-render Windows (DriveName n) = name n <> unicode ":\\"
-render Posix (HostName n) = name n <> ascii ":" <> ascii "/"
-render Windows (HostName n) = unicode "\\\\" <> name n <> unicode "\\"
-render Posix HomeDirectory = ascii "~" <> ascii "/"
-render Windows HomeDirectory = unicode "%UserProfile%\\"
-render Posix WorkingDirectory = ascii "." <> ascii "/"
-render Windows WorkingDirectory = unicode ".\\"
-render Posix (DirectoryName n) = name n <> ascii "/"
-render Windows (DirectoryName n) = name n <> unicode "\\"
-render _ (FileName n) = name n
-render Posix (FileExtension n) = ascii "." <> name n
-render Windows (FileExtension n) = unicode "." <> name n
-
--- | Render only the 'Directory' and 'File' components of a 'Path' to the
--- native 'Representation' intended for machines.
-path :: a </> b -> Builder
-path p = case p of
-    Path a b -> path a <> path b
-    DirectoryName _ -> r p
-    FileName _ -> r p
-    FileExtension _ -> r p
-    _ -> mempty
+render _ End = mempty
+render repr (Path p a) =
+    r repr p <> render repr a
   where
-    r = render native
+    r Posix RootDirectory = ascii "/"
+    r Windows RootDirectory = unicode "\\"
+    r Posix (DriveName n) = ascii "/" <> name n <> ascii ":" <> ascii "/"
+    r Windows (DriveName n) = name n <> unicode ":\\"
+    r Posix (HostName n) = name n <> ascii ":" <> ascii "/"
+    r Windows (HostName n) = unicode "\\\\" <> name n <> unicode "\\"
+    r Posix HomeDirectory = ascii "~" <> ascii "/"
+    r Windows HomeDirectory = unicode "%UserProfile%\\"
+    r Posix WorkingDirectory = ascii "." <> ascii "/"
+    r Windows WorkingDirectory = unicode ".\\"
+    r Posix (DirectoryName n) = name n <> ascii "/"
+    r Windows (DirectoryName n) = name n <> unicode "\\"
+    r _ (FileName n) = name n
+    r Posix (FileExtension n) = ascii "." <> name n
+    r Windows (FileExtension n) = unicode "." <> name n
+
+-- | Render only the 'Directory' and 'File' components of a path to the native
+-- 'Representation' intended for machines.
+path :: a </> b -> Builder
+path End = mempty
+path (Path p a) =
+    r p <> path a
+  where
+    r (DirectoryName _) = render native (Path p End)
+    r (FileName _) = render native (Path p End)
+    r (FileExtension _) = render native (Path p End)
+    r _ = mempty
 
 -- * PathName
 
@@ -235,7 +242,7 @@ locale builder = do
 
 -- * Reify
 
--- | Reify an abstract 'Path' to a concrete 'PathName'.
+-- | Reify an abstract path to a concrete 'PathName'.
 class Reify (a :: Component) where
     reify :: a </> b -> IO PathName
 

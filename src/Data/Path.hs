@@ -1,4 +1,3 @@
-{-# LANGUAGE ExplicitNamespaces #-}
 {-# LANGUAGE Trustworthy #-}
 
 -- |
@@ -7,10 +6,10 @@
 -- Portability: non-portable
 module Data.Path
     ( -- * Path
-      type (</>)
+      (</>)(..)
     , Path(..)
-    , Component(..)
     , Name(..)
+    , Component(..)
       -- ** Combinators
     , root
     , drive
