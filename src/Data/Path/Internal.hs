@@ -128,16 +128,6 @@ ext = component . FileExtension
 
 -- * Builder
 
--- | Difference list monoid for assembling chunks efficiently.
-newtype Builder = Builder (Endo [Chunk]) deriving (Monoid)
-
-instance Show Builder where
-    show = show . runBuilder
-
--- | Apply a 'Builder' to construct the final 'Chunk' list.
-runBuilder :: Builder -> [Chunk]
-runBuilder (Builder endo) = appEndo endo []
-
 -- | Segments of a path representation.
 data Chunk
     = ASCII !ByteString
@@ -147,6 +137,16 @@ data Chunk
     | Name !Name
       -- ^ Validate and encode/decode as appropriate.
   deriving (Show)
+
+-- | Difference list monoid for assembling chunks efficiently.
+newtype Builder = Builder (Endo [Chunk]) deriving (Monoid)
+
+instance Show Builder where
+    show = show . runBuilder
+
+-- | Apply a 'Builder' to construct the final 'Chunk' list.
+runBuilder :: Builder -> [Chunk]
+runBuilder (Builder endo) = appEndo endo []
 
 -- | The singleton 'Builder' primitive.
 chunk :: Chunk -> Builder

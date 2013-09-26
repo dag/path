@@ -7,10 +7,10 @@
 -- Portability: non-portable
 module Data.Path
     ( -- * Path
-      type (</>)
-    , Path(..)
-    , type (/>)
+      Path(..)
+    , type (</>)
     , Component(..)
+    , type (/>)
     , Name(..)
     , Resource(..)
       -- ** Combinators
