@@ -222,12 +222,17 @@ newtype PathName = PathName
 #endif
   deriving (Show)
 
-instance Monoid PathName where
-    mempty = PathName mempty
+-- | Append a 'PathName' to another.
+append :: PathName -> PathName -> PathName
+append (PathName a) (PathName b) = PathName (a <> b)
+
+-- | Ensure that a 'PathName' ends with a path separator.
+addTrailingPathSeparator :: PathName -> PathName
+addTrailingPathSeparator (PathName a) =
 #ifdef __POSIX__
-    mappend (PathName a) (PathName b) = PathName (Posix.combine a b)
+    PathName (Posix.addTrailingPathSeparator a)
 #else
-    mappend (PathName a) (PathName b) = PathName (FilePath.combine a b)
+    PathName (FilePath.addTrailingPathSeparator a)
 #endif
 
 -- | Construct a 'PathName' from a 'Builder' using the system locale.
@@ -281,7 +286,7 @@ instance Reify Home where
         homeDir <- FilePath.getHomeDirectory
 #endif
         pathName <- locale (path p)
-        return (PathName homeDir <> pathName)
+        return (addTrailingPathSeparator (PathName homeDir) `append` pathName)
 
 instance Reify Working where
     reify p = do
@@ -291,4 +296,5 @@ instance Reify Working where
         workingDir <- FilePath.getCurrentDirectory
 #endif
         pathName <- locale (path p)
-        return (PathName workingDir <> pathName)
+        return (addTrailingPathSeparator (PathName workingDir)
+            `append` pathName)
