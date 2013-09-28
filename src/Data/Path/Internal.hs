@@ -72,6 +72,10 @@ data Path :: Resource -> Resource -> * where
 
 deriving instance Show (Path a b)
 
+instance (b ~ a) => Monoid (Path a b) where
+    mempty = Null
+    mappend = (</>)
+
 instance (a ~ Directory, b ~ a) => IsString (Path a b) where
     fromString = dir . fromString
 
