@@ -47,18 +47,18 @@ instance IsString Name where
     fromString = Text . fromString
 
 -- | Infix 'Component' type operator.
-type (/>) = Component
+type (<>) = Component
 
 -- | Components of a 'Path'.
 data Component :: Resource -> Resource -> * where
-    RootDirectory :: Root /> Directory
-    DriveName :: !Name -> Drive /> Directory
-    HostName :: !Name -> Remote /> Directory
-    HomeDirectory :: Home /> Directory
-    WorkingDirectory :: Working /> Directory
-    DirectoryName :: !Name -> Directory /> Directory
-    FileName :: !Name -> Directory /> File
-    FileExtension :: !Name -> File /> File
+    RootDirectory :: Root <> Directory
+    DriveName :: !Name -> Drive <> Directory
+    HostName :: !Name -> Remote <> Directory
+    HomeDirectory :: Home <> Directory
+    WorkingDirectory :: Working <> Directory
+    DirectoryName :: !Name -> Directory <> Directory
+    FileName :: !Name -> Directory <> File
+    FileExtension :: !Name -> File <> File
 
 deriving instance Show (Component a b)
 
@@ -68,7 +68,7 @@ type (</>) = Path
 -- | An abstract path, linking components together.
 data Path :: Resource -> Resource -> * where
     Null :: a </> a
-    Path :: a /> b -> b </> c -> a </> c
+    Path :: a <> b -> b </> c -> a </> c
 
 deriving instance Show (Path a b)
 
@@ -95,7 +95,7 @@ n <:> b = drive n </> b
 a <.> n = a </> ext n
 
 -- | Construct a 'Path' from a 'Component'.
-component :: a /> b -> a </> b
+component :: a <> b -> a </> b
 component = flip Path Null
 
 -- | The root directory.

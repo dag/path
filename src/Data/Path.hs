@@ -10,7 +10,7 @@ module Data.Path
       Path(..)
     , type (</>)
     , Component(..)
-    , type (/>)
+    , type (<>)
     , Name(..)
     , Resource(..)
       -- ** Combinators
