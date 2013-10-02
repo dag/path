@@ -1,18 +1,23 @@
+{-# OPTIONS_HADDOCK not-home #-}
+
 {-# LANGUAGE ExplicitNamespaces #-}
-{-# LANGUAGE Safe #-}
+{-# LANGUAGE Trustworthy #-}
 
 -- |
 -- Maintainer: dag.odenhall@gmail.com
 -- Stability: experimental
 -- Portability: non-portable
 --
--- Simplified public API.  See "Data.Path.Core" for the full API.
-module Data.Path
+-- The complete public API.
+module Data.Path.Core
     ( -- * Path
-      Path
+      Path(..)
     , type (</>)
+    , Edge(..)
+    , type (->-)
     , Vertex(..)
     , Name(..)
+      -- ** Combinators
     , root
     , drive
     , host
@@ -21,13 +26,15 @@ module Data.Path
     , dir
     , file
     , ext
+      -- ** Operators
     , (</>)
     , (<:>)
     , (<.>)
       -- * PathName
     , PathName
+      -- ** Reify
     , Reify(..)
     , Reifiable
     ) where
 
-import Data.Path.Core
+import Data.Path.Internal

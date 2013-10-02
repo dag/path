@@ -31,6 +31,7 @@ FLAG posix
 
 LIBRARY
     exposed-modules: Data.Path.Internal
+    exposed-modules: Data.Path.Core
     exposed-modules: Data.Path
 
     other-extensions: CPP
@@ -40,9 +41,11 @@ LIBRARY
     other-extensions: GeneralizedNewtypeDeriving
     other-extensions: KindSignatures
     other-extensions: OverloadedStrings
+    other-extensions: Safe
     other-extensions: StandaloneDeriving
     other-extensions: Trustworthy
     other-extensions: TypeOperators
+    other-extensions: Unsafe
 
     build-depends: base >=4.6 && <4.7
     build-depends: bytestring >=0.10 && <0.11

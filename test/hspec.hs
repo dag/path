@@ -11,6 +11,7 @@ module Main (main) where
 import Control.Applicative ((<$>), pure)
 import Data.Monoid (Monoid(..), (<>))
 import Data.Path
+import Data.Path.Core (Path(Nil))
 import Data.Proxy (Proxy(..))
 import Test.Hspec (Spec, hspec, describe)
 import Test.Hspec.QuickCheck (prop)

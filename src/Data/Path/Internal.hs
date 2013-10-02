@@ -8,11 +8,14 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE Unsafe #-}
 
 -- |
 -- Maintainer: dag.odenhall@gmail.com
 -- Stability: internal
 -- Portability: non-portable
+--
+-- Unsafe and unstable internals.
 module Data.Path.Internal where
 
 import Control.Applicative ((<$>))
