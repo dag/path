@@ -9,10 +9,10 @@ module Data.Path
     ( -- * Path
       Path(..)
     , type (</>)
-    , Component(..)
-    , type (<>)
+    , Edge(..)
+    , type (->-)
+    , Vertex(..)
     , Name(..)
-    , Resource(..)
       -- ** Combinators
     , root
     , drive

@@ -35,45 +35,49 @@ import qualified System.Directory as FilePath
 import qualified System.FilePath as FilePath
 #endif
 
--- * Path
+-- * Name
 
--- | 'Component' types.
-data Resource = Root | Drive | Remote | Home | Working | Directory | File
-
--- | Name of a 'Component', to be encoded or decoded as appropriate.
+-- | A named component of a path, to be encoded or decoded as appropriate.
 data Name = ByteString !ByteString | Text !Text deriving (Show)
 
 instance IsString Name where
     fromString = Text . fromString
 
--- | Infix 'Component' type operator.
-type (<>) = Component
+-- * Path
 
--- | Components of a 'Path'.
-data Component :: Resource -> Resource -> * where
-    RootDirectory :: Root <> Directory
-    DriveName :: !Name -> Drive <> Directory
-    HostName :: !Name -> Remote <> Directory
-    HomeDirectory :: Home <> Directory
-    WorkingDirectory :: Working <> Directory
-    DirectoryName :: !Name -> Directory <> Directory
-    FileName :: !Name -> Directory <> File
-    FileExtension :: !Name -> File <> File
+-- | The kind of types of vertices in the filesystem graph, and the objects of
+-- the 'Path' category.
+data Vertex = Root | Drive | Remote | Home | Working | Directory | File
 
-deriving instance Show (Component a b)
+-- | Infix 'Edge' type operator.
+type (->-) = Edge
+
+-- | The edges between vertices in the filesystem graph.
+data Edge :: Vertex -> Vertex -> * where
+    RootDirectory :: Root ->- Directory
+    DriveName :: !Name -> Drive ->- Directory
+    HostName :: !Name -> Remote ->- Directory
+    HomeDirectory :: Home ->- Directory
+    WorkingDirectory :: Working ->- Directory
+    DirectoryName :: !Name -> Directory ->- Directory
+    FileName :: !Name -> Directory ->- File
+    FileExtension :: !Name -> File ->- File
+
+deriving instance Show (Edge a b)
 
 -- | Infix 'Path' type operator.
 type (</>) = Path
 
--- | An abstract path, linking components together.
-data Path :: Resource -> Resource -> * where
-    Null :: a </> a
-    Path :: a <> b -> b </> c -> a </> c
+-- | A path between vertices in the filesystem graph as a sequence of edges,
+-- forming a free category under concatenation.
+data Path :: Vertex -> Vertex -> * where
+    Nil :: a </> a
+    Cons :: a ->- b -> b </> c -> a </> c
 
 deriving instance Show (Path a b)
 
 instance (b ~ a) => Monoid (Path a b) where
-    mempty = Null
+    mempty = Nil
     mappend = (</>)
 
 instance (a ~ Directory, b ~ a) => IsString (Path a b) where
@@ -81,12 +85,12 @@ instance (a ~ Directory, b ~ a) => IsString (Path a b) where
 
 -- * Combinators
 
--- | Join two paths together.
+-- | Concatenate two paths.
 (</>) :: a </> b -> b </> c -> a </> c
-Null </> b = b
-Path c a </> b = Path c (a </> b)
+Nil </> b = b
+Cons e a </> b = Cons e (a </> b)
 
--- | Append a path to a 'drive' name.
+-- | Prepend a 'drive' name to a path.
 (<:>) :: Name -> Directory </> b -> Drive </> b
 n <:> b = drive n </> b
 
@@ -94,41 +98,41 @@ n <:> b = drive n </> b
 (<.>) :: a </> File -> Name -> a </> File
 a <.> n = a </> ext n
 
--- | Construct a 'Path' from a 'Component'.
-component :: a <> b -> a </> b
-component = flip Path Null
+-- | Construct a 'Path' from an 'Edge'.
+edge :: a ->- b -> a </> b
+edge = flip Cons Nil
 
 -- | The root directory.
 root :: Root </> Directory
-root = component RootDirectory
+root = edge RootDirectory
 
 -- | A drive letter / device name.
 drive :: Name -> Drive </> Directory
-drive = component . DriveName
+drive = edge . DriveName
 
 -- | A remote host.
 host :: Name -> Remote </> Directory
-host = component . HostName
+host = edge . HostName
 
 -- | The home directory of the current user.
 home :: Home </> Directory
-home = component HomeDirectory
+home = edge HomeDirectory
 
 -- | The current working directory.
 cwd :: Working </> Directory
-cwd = component WorkingDirectory
+cwd = edge WorkingDirectory
 
 -- | A directory.
 dir :: Name -> Directory </> Directory
-dir = component . DirectoryName
+dir = edge . DirectoryName
 
 -- | A file name.
 file :: Name -> Directory </> File
-file = component . FileName
+file = edge . FileName
 
 -- | A file extension.
 ext :: Name -> File </> File
-ext = component . FileExtension
+ext = edge . FileExtension
 
 -- * Builder
 
@@ -183,9 +187,9 @@ native = Posix
 
 -- | Render a path to a 'Representation' intended for humans.
 render :: Representation -> a </> b -> Builder
-render _ Null = mempty
-render repr (Path c a) =
-    r repr c <> render repr a
+render _ Nil = mempty
+render repr (Cons e a) =
+    r repr e <> render repr a
   where
     r Posix RootDirectory = ascii "/"
     r Windows RootDirectory = unicode "\\"
@@ -206,13 +210,13 @@ render repr (Path c a) =
 -- | Render only the 'Directory' and 'File' resources of a path to the native
 -- 'Representation' intended for machines.
 path :: a </> b -> Builder
-path Null = mempty
-path (Path c a) =
-    r c <> path a
+path Nil = mempty
+path (Cons e a) =
+    r e <> path a
   where
-    r (DirectoryName _) = render native (component c)
-    r (FileName _) = render native (component c)
-    r (FileExtension _) = render native (component c)
+    r (DirectoryName _) = render native (edge e)
+    r (FileName _) = render native (edge e)
+    r (FileExtension _) = render native (edge e)
     r _ = mempty
 
 -- * PathName
@@ -260,11 +264,11 @@ locale builder = do
 
 -- * Reify
 
--- | 'Resource' types that we can 'reify'.  This is necessary to prevent things
--- like @reify (Null :: Drive \</\> Drive)@ which would otherwise type-check
+-- | 'Vertex' types that we can 'reify'.  This is necessary to prevent things
+-- like @reify (Nil :: Drive \</\> Drive)@ which would otherwise type-check
 -- and return an empty 'PathName', which isn't a valid file path and certainly
 -- not the name of a 'drive'.
-class Reifiable (b :: Resource)
+class Reifiable (b :: Vertex)
 instance Reifiable Directory
 instance Reifiable File
 

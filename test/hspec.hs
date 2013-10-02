@@ -58,7 +58,7 @@ category _ _ = describe "Category laws" $ do
     prop "associative" associative
   where
     identity :: a </> b -> Bool
-    identity a = show (a </> Null) == show a && show (Null </> a) == show a
+    identity a = show (a </> Nil) == show a && show (Nil </> a) == show a
     associative :: a </> b -> b </> c -> c </> d -> Bool
     associative a b c = show (a </> (b </> c)) == show ((a </> b) </> c)
 
