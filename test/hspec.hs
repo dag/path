@@ -59,19 +59,19 @@ category _ _ = describe "Category laws" $ do
     prop "associative" associative
   where
     identity :: a </> b -> Bool
-    identity a = show (a </> Nil) == show a && show (Nil </> a) == show a
+    identity a = (a </> Nil) == a && (Nil </> a) == a
     associative :: a </> b -> b </> c -> c </> d -> Bool
-    associative a b c = show (a </> (b </> c)) == show ((a </> b) </> c)
+    associative a b c = (a </> (b </> c)) == ((a </> b) </> c)
 
-monoid :: forall m. (Arbitrary m, Monoid m, Show m) => Proxy m -> Spec
+monoid :: forall m. (Arbitrary m, Monoid m, Show m, Eq m) => Proxy m -> Spec
 monoid _ = describe "Monoid laws" $ do
     prop "identity" identity
     prop "associative" associative
   where
     identity :: m -> Bool
-    identity a = show (a <> mempty) == show a && show (mempty <> a) == show a
+    identity a = (a <> mempty) == a && (mempty <> a) == a
     associative :: m -> m -> m -> Bool
-    associative a b c = show (a <> (b <> c)) == show ((a <> b) <> c)
+    associative a b c = (a <> (b <> c)) == ((a <> b) <> c)
 
 main :: IO ()
 main = hspec $ do

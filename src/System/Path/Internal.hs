@@ -42,7 +42,7 @@ import qualified System.FilePath as FilePath
 -- * Name
 
 -- | A named component of a path, to be encoded or decoded as appropriate.
-data Name = ByteString !ByteString | Text !Text deriving (Show)
+data Name = ByteString !ByteString | Text !Text deriving (Eq, Show)
 
 instance IsString Name where
     fromString = Text . fromString
@@ -59,6 +59,8 @@ class Mono t where
 -- | The kind of types of vertices in the filesystem graph, and the objects of
 -- the 'Path' category.
 data Vertex = Root | Drive | Remote | Home | Working | Directory | File
+
+deriving instance Eq Vertex
 
 -- | Test if a 'Vertex' is the designated root of the filesystem graph.
 type family IsRoot (v :: Vertex) :: Bool
@@ -105,6 +107,9 @@ type (</>) = Path
 data Path :: Vertex -> Vertex -> * where
     Nil :: a </> a
     Cons :: a ->- b -> b </> c -> a </> c
+
+instance Eq (Path a b) where
+    a == b = mono a == mono b
 
 deriving instance Show (Path a b)
 
