@@ -9,7 +9,7 @@
 -- Portability: non-portable
 --
 -- The complete public API.
-module Data.Path.Core
+module System.Path.Core
     ( -- * Path
       Path(..)
     , type (</>)
@@ -37,4 +37,4 @@ module Data.Path.Core
     , Reifiable
     ) where
 
-import Data.Path.Internal
+import System.Path.Internal

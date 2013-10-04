@@ -10,9 +10,9 @@ module Main (main) where
 
 import Control.Applicative ((<$>), pure)
 import Data.Monoid (Monoid(..), (<>))
-import Data.Path
-import Data.Path.Core (Path(Nil))
 import Data.Proxy (Proxy(..))
+import System.Path
+import System.Path.Core (Path(Nil))
 import Test.Hspec (Spec, hspec, describe)
 import Test.Hspec.QuickCheck (prop)
 import Test.QuickCheck (Arbitrary(..), oneof, listOf)

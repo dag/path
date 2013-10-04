@@ -30,9 +30,9 @@ FLAG posix
     manual: True
 
 LIBRARY
-    exposed-modules: Data.Path.Internal
-    exposed-modules: Data.Path.Core
-    exposed-modules: Data.Path
+    exposed-modules: System.Path.Internal
+    exposed-modules: System.Path.Core
+    exposed-modules: System.Path
 
     other-extensions: CPP
     other-extensions: DataKinds

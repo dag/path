@@ -6,8 +6,8 @@
 -- Stability: experimental
 -- Portability: non-portable
 --
--- Simplified public API.  See "Data.Path.Core" for the full API.
-module Data.Path
+-- Simplified public API.  See "System.Path.Core" for the full API.
+module System.Path
     ( -- * Abstract path category
       -- $path
       Path
@@ -32,7 +32,7 @@ module Data.Path
     , Reifiable
     ) where
 
-import Data.Path.Core
+import System.Path.Core
 
 -- $path
 --

@@ -16,7 +16,7 @@
 -- Portability: non-portable
 --
 -- Unsafe and unstable internals.
-module Data.Path.Internal where
+module System.Path.Internal where
 
 import Control.Applicative ((<$>))
 import Data.ByteString (ByteString)
