@@ -224,7 +224,7 @@ path (Cons e a) =
 
 -- * PathName
 
--- | A concrete path on the local file system.
+-- | A concrete path on the local filesystem.
 newtype PathName = PathName
 #ifdef __POSIX__
     Posix.RawFilePath
