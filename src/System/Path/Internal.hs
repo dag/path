@@ -42,7 +42,7 @@ import qualified System.FilePath as FilePath
 -- * Name
 
 -- | A named component of a path, to be encoded or decoded as appropriate.
-data Name = ByteString !ByteString | Text !Text deriving (Eq, Show)
+data Name = ByteString !ByteString | Text !Text deriving (Eq, Ord, Show)
 
 instance IsString Name where
     fromString = Text . fromString
@@ -59,8 +59,7 @@ class Mono t where
 -- | The kind of types of vertices in the filesystem graph, and the objects of
 -- the 'Path' category.
 data Vertex = Root | Drive | Remote | Home | Working | Directory | File
-
-deriving instance Eq Vertex
+  deriving (Eq, Ord, Show)
 
 -- | Test if a 'Vertex' is the designated root of the filesystem graph.
 type family IsRoot (v :: Vertex) :: Bool
@@ -86,6 +85,11 @@ data Edge :: Vertex -> Vertex -> * where
     FileName :: !Name -> Directory ->- File
     FileExtension :: !Name -> File ->- File
 
+deriving instance Eq (Edge a b)
+
+instance Ord (Edge a b) where
+    compare a b = compare (mono a) (mono b)
+
 deriving instance Show (Edge a b)
 
 instance Mono (Edge a b) where
@@ -110,6 +114,9 @@ data Path :: Vertex -> Vertex -> * where
 
 instance Eq (Path a b) where
     a == b = mono a == mono b
+
+instance Ord (Path a b) where
+    compare a b = compare (mono a) (mono b)
 
 deriving instance Show (Path a b)
 
@@ -186,10 +193,16 @@ data Chunk
       -- ^ Encode as appropriate; pass-through on decode.
     | Name !Name
       -- ^ Validate and encode/decode as appropriate.
-  deriving (Show)
+  deriving (Eq, Ord, Show)
 
 -- | Difference list monoid for assembling chunks efficiently.
 newtype Builder = Builder (Endo [Chunk]) deriving (Monoid)
+
+instance Eq Builder where
+    a == b = runBuilder a == runBuilder b
+
+instance Ord Builder where
+    compare a b = compare (runBuilder a) (runBuilder b)
 
 instance Show Builder where
     show = show . runBuilder
@@ -217,7 +230,7 @@ name = chunk . Name
 -- * Representations
 
 -- | Syntax for representing a path in readable form.
-data Representation = Posix | Windows
+data Representation = Posix | Windows deriving (Eq, Ord, Show)
 
 -- | The native 'Representation' of the platform.
 native :: Representation
@@ -270,7 +283,7 @@ newtype PathName = PathName
 #else
     FilePath.FilePath
 #endif
-  deriving (Show)
+  deriving (Eq, Ord, Show)
 
 -- | Append a 'PathName' to another.
 append :: PathName -> PathName -> PathName
