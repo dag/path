@@ -11,9 +11,12 @@ module System.Path
     ( -- * Abstract path category
       -- $path
       Path
-    , type (</>)
     , Vertex(..)
     , Name(..)
+    , type (</>)
+    , (</>)
+    , (<:>)
+    , (<.>)
     , root
     , drive
     , host
@@ -22,9 +25,6 @@ module System.Path
     , dir
     , file
     , ext
-    , (</>)
-    , (<:>)
-    , (<.>)
       -- * Opaque filesystem pathname
       -- $pathname
     , PathName

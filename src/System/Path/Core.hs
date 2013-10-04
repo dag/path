@@ -12,12 +12,17 @@
 module System.Path.Core
     ( -- * Path
       Path(..)
-    , type (</>)
     , Edge(..)
-    , type (->-)
     , Vertex(..)
-    , IsRoot
     , Name(..)
+      -- ** Type level
+    , type (</>)
+    , type (->-)
+    , IsRoot
+      -- ** Operators
+    , (</>)
+    , (<:>)
+    , (<.>)
       -- ** Combinators
     , root
     , drive
@@ -27,13 +32,8 @@ module System.Path.Core
     , dir
     , file
     , ext
-      -- ** Operators
-    , (</>)
-    , (<:>)
-    , (<.>)
       -- * PathName
     , PathName
-      -- ** Reify
     , Reify(..)
     ) where
 
