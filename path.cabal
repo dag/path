@@ -44,6 +44,7 @@ LIBRARY
     other-extensions: Safe
     other-extensions: StandaloneDeriving
     other-extensions: Trustworthy
+    other-extensions: TypeFamilies
     other-extensions: TypeOperators
     other-extensions: Unsafe
 

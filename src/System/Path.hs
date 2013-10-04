@@ -29,7 +29,6 @@ module System.Path
       -- $pathname
     , PathName
     , Reify(..)
-    , Reifiable
     ) where
 
 import System.Path.Core

@@ -16,6 +16,7 @@ module System.Path.Core
     , Edge(..)
     , type (->-)
     , Vertex(..)
+    , IsRoot
     , Name(..)
       -- ** Combinators
     , root
@@ -34,7 +35,6 @@ module System.Path.Core
     , PathName
       -- ** Reify
     , Reify(..)
-    , Reifiable
     ) where
 
 import System.Path.Internal

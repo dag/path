@@ -7,6 +7,7 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE Unsafe #-}
 
@@ -51,6 +52,16 @@ instance IsString Name where
 -- | The kind of types of vertices in the filesystem graph, and the objects of
 -- the 'Path' category.
 data Vertex = Root | Drive | Remote | Home | Working | Directory | File
+
+-- | Test if a 'Vertex' is the designated root of the filesystem graph.
+type family IsRoot (v :: Vertex) :: Bool
+type instance IsRoot Root = True
+type instance IsRoot Drive = True
+type instance IsRoot Remote = True
+type instance IsRoot Home = True
+type instance IsRoot Working = True
+type instance IsRoot Directory = False
+type instance IsRoot File = False
 
 -- | Infix 'Edge' type operator.
 type (->-) = Edge
@@ -267,17 +278,9 @@ locale builder = do
 
 -- * Reify
 
--- | 'Vertex' types that we can 'reify'.  This is necessary to prevent things
--- like @reify (Nil :: Drive \</\> Drive)@ which would otherwise type-check
--- and return an empty 'PathName', which isn't a valid file path and certainly
--- not the name of a 'drive'.
-class Reifiable (b :: Vertex)
-instance Reifiable Directory
-instance Reifiable File
-
 -- | Reify an abstract 'Path' to a concrete 'PathName'.
-class Reify a where
-    reify :: (Reifiable b) => a </> b -> IO PathName
+class (IsRoot a ~ True) => Reify a where
+    reify :: (IsRoot b ~ False) => a </> b -> IO PathName
 
 #ifndef __WINDOWS__
 instance Reify Root where
