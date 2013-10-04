@@ -47,6 +47,13 @@ data Name = ByteString !ByteString | Text !Text deriving (Show)
 instance IsString Name where
     fromString = Text . fromString
 
+-- * Mono
+
+-- | Construct a monomorphic representation of a type.
+class Mono t where
+    type Monomorphic t
+    mono :: t -> Monomorphic t
+
 -- * Path
 
 -- | The kind of types of vertices in the filesystem graph, and the objects of
@@ -79,6 +86,17 @@ data Edge :: Vertex -> Vertex -> * where
 
 deriving instance Show (Edge a b)
 
+instance Mono (Edge a b) where
+    type Monomorphic (Edge a b) = (Maybe Name, Vertex, Vertex)
+    mono RootDirectory = (Nothing, Root, Directory)
+    mono (DriveName n) = (Just n, Drive, Directory)
+    mono (HostName n) = (Just n, Remote, Directory)
+    mono HomeDirectory = (Nothing, Home, Directory)
+    mono WorkingDirectory = (Nothing, Working, Directory)
+    mono (DirectoryName n) = (Just n, Directory, Directory)
+    mono (FileName n) = (Just n, Directory, File)
+    mono (FileExtension n) = (Just n, File, File)
+
 -- | Infix 'Path' type operator.
 type (</>) = Path
 
@@ -96,6 +114,11 @@ instance (b ~ a) => Monoid (Path a b) where
 
 instance (a ~ Directory, b ~ a) => IsString (Path a b) where
     fromString = dir . fromString
+
+instance Mono (Path a b) where
+    type Monomorphic (Path a b) = [(Maybe Name, Vertex, Vertex)]
+    mono Nil = []
+    mono (Cons e p) = mono e : mono p
 
 -- * Combinators
 
