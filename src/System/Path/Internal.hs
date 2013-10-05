@@ -39,6 +39,13 @@ import qualified System.Directory as FilePath
 import qualified System.FilePath as FilePath
 #endif
 
+-- * Mono
+
+-- | Construct a monomorphic representation of a type.
+class Mono t where
+    type Monomorphic t
+    mono :: t -> Monomorphic t
+
 -- * Name
 
 -- | A named component of a path, to be encoded or decoded as appropriate.
@@ -47,14 +54,7 @@ data Name = ByteString !ByteString | Text !Text deriving (Eq, Ord, Show)
 instance IsString Name where
     fromString = Text . fromString
 
--- * Mono
-
--- | Construct a monomorphic representation of a type.
-class Mono t where
-    type Monomorphic t
-    mono :: t -> Monomorphic t
-
--- * Path
+-- * Vertex
 
 -- | The kind of types of vertices in the filesystem graph, and the objects of
 -- the 'Path' category.
@@ -85,6 +85,8 @@ type instance IsNative Home = True
 type instance IsNative Working = True
 type instance IsNative Directory = True
 type instance IsNative File = True
+
+-- * Edge
 
 -- | Infix 'Edge' type operator.
 type (->-) = Edge
@@ -118,6 +120,8 @@ instance Mono (Edge a b) where
     mono (FileName n) = (Just n, Directory, File)
     mono (FileExtension n) = (Just n, File, File)
 
+-- * Path
+
 -- | Infix 'Path' type operator.
 type (</>) = Path
 
@@ -146,8 +150,6 @@ instance Mono (Path a b) where
     type Monomorphic (Path a b) = [(Maybe Name, Vertex, Vertex)]
     mono Nil = []
     mono (Cons e p) = mono e : mono p
-
--- * Combinators
 
 -- | Concatenate two paths.
 (</>) :: a </> b -> b </> c -> a </> c
@@ -198,7 +200,7 @@ file = edge . FileName
 ext :: Name -> File </> File
 ext = edge . FileExtension
 
--- * Builder
+-- * Chunk
 
 -- | Segments of a path representation.
 data Chunk
@@ -209,6 +211,8 @@ data Chunk
     | Name !Name
       -- ^ Validate and encode/decode as appropriate.
   deriving (Eq, Ord, Show)
+
+-- * Builder
 
 -- | Difference list monoid for assembling chunks efficiently.
 newtype Builder = Builder (Endo [Chunk]) deriving (Monoid)
@@ -242,7 +246,7 @@ unicode = chunk . Unicode
 name :: Name -> Builder
 name = chunk . Name
 
--- * Representations
+-- * Representation
 
 -- | Syntax for representing a path in readable form.
 data Representation = Posix | Windows deriving (Eq, Ord, Show)
