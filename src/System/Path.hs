@@ -28,7 +28,7 @@ module System.Path
       -- * Opaque filesystem pathname
       -- $pathname
     , PathName
-    , Reify(..)
+    , Reify
     ) where
 
 import System.Path.Core

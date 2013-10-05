@@ -19,7 +19,7 @@
 -- Unsafe and unstable internals.
 module System.Path.Internal where
 
-import Control.Applicative ((<$>))
+import Control.Applicative ((<$>), (<*>))
 import Data.ByteString (ByteString)
 import Data.Monoid (Monoid(..), Endo(..), (<>))
 import Data.String (IsString(..))
@@ -70,6 +70,21 @@ type instance IsRoot Home = True
 type instance IsRoot Working = True
 type instance IsRoot Directory = False
 type instance IsRoot File = False
+
+-- | Test if a 'Vertex' is understood by the native platform.
+type family IsNative (v :: Vertex) :: Bool
+#ifndef __WINDOWS__
+type instance IsNative Root = True
+type instance IsNative Drive = False
+#else
+type instance IsNative Root = False
+type instance IsNative Drive = True
+#endif
+type instance IsNative Remote = False
+type instance IsNative Home = True
+type instance IsNative Working = True
+type instance IsNative Directory = True
+type instance IsNative File = True
 
 -- | Infix 'Edge' type operator.
 type (->-) = Edge
@@ -262,18 +277,6 @@ render repr (Cons e a) =
     r Posix (FileExtension n) = ascii "." <> name n
     r Windows (FileExtension n) = unicode "." <> name n
 
--- | Render only the 'Directory' and 'File' resources of a path to the native
--- 'Representation' intended for machines.
-path :: a </> b -> Builder
-path Nil = mempty
-path (Cons e a) =
-    r e <> path a
-  where
-    r (DirectoryName _) = render native (edge e)
-    r (FileName _) = render native (edge e)
-    r (FileExtension _) = render native (edge e)
-    r _ = mempty
-
 -- * PathName
 
 -- | A concrete path on the local filesystem.
@@ -317,39 +320,46 @@ locale builder = do
     PathName . Text.unpack . Text.concat <$> mapM c (runBuilder builder)
 #endif
 
--- * Reify
+-- * Resolve
 
--- | Reify an abstract 'Path' to a concrete 'PathName'.
-class (IsRoot a ~ True) => Reify a where
-    reify :: (IsRoot b ~ False) => a </> b -> IO PathName
+-- | Resolve the edge from a native root vertex into a concrete 'PathName' for
+-- the corresponding directory.
+class (IsRoot a ~ True, IsNative a ~ True) => Resolve a where
+    resolve :: a ->- b -> IO PathName
 
 #ifndef __WINDOWS__
-instance Reify Root where
-    reify = locale . render Posix
-#endif
-
-#ifdef __WINDOWS__
-instance Reify Drive where
-    reify = locale . render Windows
-#endif
-
-instance Reify Home where
-    reify p = do
-#ifdef __POSIX__
-        Just homeDir <- Posix.getEnv "HOME"
+instance Resolve Root where
 #else
-        homeDir <- FilePath.getHomeDirectory
+instance Resolve Drive where
 #endif
-        pathName <- locale (path p)
-        return (addTrailingPathSeparator (PathName homeDir) `append` pathName)
+    resolve = locale . render native . edge
 
-instance Reify Working where
-    reify p = do
+instance Resolve Home where
+    resolve _ = addTrailingPathSeparator . PathName <$>
 #ifdef __POSIX__
-        workingDir <- Posix.getWorkingDirectory
+        do Just homeDir <- Posix.getEnv "HOME"
+           return homeDir
 #else
-        workingDir <- FilePath.getCurrentDirectory
+        FilePath.getHomeDirectory
 #endif
-        pathName <- locale (path p)
-        return (addTrailingPathSeparator (PathName workingDir)
-            `append` pathName)
+
+instance Resolve Working where
+    resolve _ = addTrailingPathSeparator . PathName <$>
+#ifdef __POSIX__
+        Posix.getWorkingDirectory
+#else
+        FilePath.getCurrentDirectory
+#endif
+
+-- * Reify
+
+-- | Reify paths into a concrete 'PathName'.
+class Reify a where
+    reify :: a -> IO PathName
+
+instance Reify PathName where
+    reify = return
+
+instance (Resolve a, IsRoot b ~ False) => Reify (Path a b) where
+    reify (Cons e es) = append <$> resolve e <*> locale (render native es)
+    reify _ = fail "impossible"

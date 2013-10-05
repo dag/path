@@ -19,6 +19,7 @@ module System.Path.Core
     , type (</>)
     , type (->-)
     , IsRoot
+    , IsNative
       -- ** Operators
     , (</>)
     , (<:>)
@@ -34,6 +35,7 @@ module System.Path.Core
     , ext
       -- * PathName
     , PathName
+    , Resolve(..)
     , Reify(..)
     ) where
 
