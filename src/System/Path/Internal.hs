@@ -281,28 +281,37 @@ render repr (Cons e a) =
     r Posix (FileExtension n) = ascii "." <> name n
     r Windows (FileExtension n) = unicode "." <> name n
 
--- * PathName
+-- * PrimitivePath
 
--- | A concrete path on the local filesystem.
-newtype PathName = PathName
+-- | The internal type behind 'PathName', which depends on the platform and the
+-- build flags.
+type PrimitivePath =
 #ifdef __POSIX__
     Posix.RawFilePath
 #else
     FilePath.FilePath
 #endif
-  deriving (Eq, Ord, Show)
+
+-- * PathName
+
+-- | A concrete path on the local filesystem.
+newtype PathName = PathName PrimitivePath deriving (Eq, Ord, Show)
+
+-- | Map a function over the 'PrimitivePath' inside a 'PathName'.
+mapPathName :: (PrimitivePath -> PrimitivePath) -> PathName -> PathName
+mapPathName f (PathName a) = PathName (f a)
 
 -- | Append a 'PathName' to another.
 append :: PathName -> PathName -> PathName
-append (PathName a) (PathName b) = PathName (a <> b)
+append (PathName a) = mapPathName (a <>)
 
--- | Ensure that a 'PathName' ends with a path separator.
-addTrailingPathSeparator :: PathName -> PathName
-addTrailingPathSeparator (PathName a) =
+-- | Construct a 'PathName' and ensure it ends with a path separator.
+dirName :: PrimitivePath -> PathName
+dirName = PathName .
 #ifdef __POSIX__
-    PathName (Posix.addTrailingPathSeparator a)
+    Posix.addTrailingPathSeparator
 #else
-    PathName (FilePath.addTrailingPathSeparator a)
+    FilePath.addTrailingPathSeparator
 #endif
 
 -- | Construct a 'PathName' from a 'Builder' using the system locale.
@@ -339,7 +348,7 @@ instance Resolve Drive where
     resolve = locale . render native . edge
 
 instance Resolve Home where
-    resolve _ = addTrailingPathSeparator . PathName <$>
+    resolve _ = dirName <$>
 #ifdef __POSIX__
         do Just homeDir <- Posix.getEnv "HOME"
            return homeDir
@@ -348,7 +357,7 @@ instance Resolve Home where
 #endif
 
 instance Resolve Working where
-    resolve _ = addTrailingPathSeparator . PathName <$>
+    resolve _ = dirName <$>
 #ifdef __POSIX__
         Posix.getWorkingDirectory
 #else
