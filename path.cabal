@@ -39,7 +39,6 @@ LIBRARY
     other-extensions: ExplicitNamespaces
     other-extensions: GADTs
     other-extensions: GeneralizedNewtypeDeriving
-    other-extensions: KindSignatures
     other-extensions: OverloadedStrings
     other-extensions: Safe
     other-extensions: StandaloneDeriving
