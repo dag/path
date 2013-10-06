@@ -20,6 +20,7 @@ module System.Path.Internal where
 
 import Control.Applicative ((<$>), (<*>))
 import Data.ByteString (ByteString)
+import Data.Function (on)
 import Data.Monoid (Monoid(..), Endo(..), (<>))
 import Data.String (IsString(..))
 import Data.Text (Text)
@@ -104,7 +105,7 @@ data Edge :: Vertex -> Vertex -> * where
 deriving instance Eq (Edge a b)
 
 instance Ord (Edge a b) where
-    compare a b = compare (mono a) (mono b)
+    compare = compare `on` mono
 
 deriving instance Show (Edge a b)
 
@@ -131,10 +132,10 @@ data Path :: Vertex -> Vertex -> * where
     Cons :: a ->- b -> b </> c -> a </> c
 
 instance Eq (Path a b) where
-    a == b = mono a == mono b
+    (==) = (==) `on` mono
 
 instance Ord (Path a b) where
-    compare a b = compare (mono a) (mono b)
+    compare = compare `on` mono
 
 deriving instance Show (Path a b)
 
@@ -217,10 +218,10 @@ data Chunk
 newtype Builder = Builder (Endo [Chunk]) deriving (Monoid)
 
 instance Eq Builder where
-    a == b = runBuilder a == runBuilder b
+    (==) = (==) `on` runBuilder
 
 instance Ord Builder where
-    compare a b = compare (runBuilder a) (runBuilder b)
+    compare = compare `on` runBuilder
 
 instance Show Builder where
     show = show . runBuilder
