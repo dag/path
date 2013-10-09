@@ -19,7 +19,10 @@ module System.Path.Core
     , type (</>)
     , type (->-)
     , IsRoot
+    , Rooted
+    , NonEmpty
     , IsNative
+    , Native
       -- ** Operators
     , (</>)
     , (<:>)

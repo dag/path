@@ -34,6 +34,7 @@ LIBRARY
     exposed-modules: System.Path.Core
     exposed-modules: System.Path
 
+    other-extensions: ConstraintKinds
     other-extensions: CPP
     other-extensions: DataKinds
     other-extensions: ExplicitNamespaces

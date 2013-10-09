@@ -1,5 +1,6 @@
 {-# OPTIONS_HADDOCK not-home #-}
 
+{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
@@ -71,6 +72,15 @@ type instance IsRoot Working = True
 type instance IsRoot Directory = False
 type instance IsRoot File = False
 
+-- | If the start 'Vertex' is a root, the tree is rooted.
+type Rooted a = IsRoot a ~ True
+
+-- | A 'Path' is non-empty if it uses at least one 'Edge', which we know to be
+-- true statically if the start and end vertices differ.  Currently, we only
+-- test this for a 'Rooted' tree, since without overlapping type family
+-- instances we'd have to write an instance for every valid path.
+type NonEmpty a b = (Rooted a, IsRoot b ~ False)
+
 -- | Test if a 'Vertex' is understood by the native platform.
 type family IsNative (v :: Vertex) :: Bool
 #ifndef __WINDOWS__
@@ -85,6 +95,10 @@ type instance IsNative Home = True
 type instance IsNative Working = True
 type instance IsNative Directory = True
 type instance IsNative File = True
+
+-- | A path is understood by the native platform if the start 'Vertex' is,
+-- because every end 'Vertex' is.
+type Native a = IsNative a ~ True
 
 -- * Edge
 
@@ -337,7 +351,7 @@ locale builder = do
 
 -- | Resolve the edge from a native root vertex into a concrete 'PathName' for
 -- the corresponding directory.
-class (IsRoot a ~ True, IsNative a ~ True) => Resolve a where
+class (Rooted a, Native a) => Resolve a where
     resolve :: a ->- b -> IO PathName
 
 #ifndef __WINDOWS__
@@ -373,6 +387,6 @@ class Reify a where
 instance Reify PathName where
     reify = return
 
-instance (Resolve a, IsRoot b ~ False) => Reify (Path a b) where
+instance (Resolve a, NonEmpty a b) => Reify (Path a b) where
     reify (Cons e es) = append <$> resolve e <*> locale (render native es)
     reify _ = fail "impossible"
