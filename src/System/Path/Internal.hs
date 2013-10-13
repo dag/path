@@ -27,14 +27,17 @@ import Data.String (IsString(..))
 import Data.Text (Text)
 import GHC.IO.Encoding (getLocaleEncoding)
 import GHC.IO.Handle (noNewlineTranslation)
+import qualified Data.Text as Text
 import qualified Data.Text.Encoding.Locale as Text
 
-#ifdef __POSIX__
+#ifndef __WINDOWS__
 import qualified Data.ByteString as ByteString
+#endif
+
+#ifdef __POSIX__
 import qualified System.Posix.ByteString as Posix
 import qualified System.Posix.FilePath as Posix
 #else
-import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
 import qualified System.Directory as FilePath
 import qualified System.FilePath as FilePath
@@ -390,3 +393,36 @@ instance Reify PathName where
 instance (Resolve a, NonEmpty a b) => Reify (Path a b) where
     reify (Cons e es) = append <$> resolve e <*> locale (render native es)
     reify _ = fail "impossible"
+
+-- | Reify a path to bytes.  Text components will be encoded using the system
+-- locale encoding.
+encode :: (Reify a) => a -> IO ByteString
+encode p = do
+    PathName path <- reify p
+#ifdef __POSIX__
+    return . Posix.dropTrailingPathSeparator $ path
+#else
+    encoding <- getLocaleEncoding
+    let encode' = Text.encodeLocale' encoding noNewlineTranslation . Text.pack
+#ifdef __WINDOWS__
+    encode' . FilePath.dropTrailingPathSeparator $ path
+#else
+    let ps = "" : tail (FilePath.splitDirectories path)
+    bs <- mapM encode' ps
+    return . ByteString.concat . map ("/" <>) $ bs
+#endif
+#endif
+
+-- | Reify a path to text.  Bytes components will be decoded using the system
+-- locale encoding.
+decode :: (Reify a) => a -> IO Text
+decode p = do
+    PathName path <- reify p
+#ifdef __POSIX__
+    let ps = "" : tail (Posix.splitDirectories path)
+    encoding <- getLocaleEncoding
+    ts <- mapM (Text.decodeLocale' encoding noNewlineTranslation) ps
+    return . Text.concat . map ("/" <>) $ ts
+#else
+    return . Text.pack . FilePath.dropTrailingPathSeparator $ path
+#endif

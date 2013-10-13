@@ -40,6 +40,8 @@ module System.Path.Core
     , PathName
     , Resolve(..)
     , Reify(..)
+    , encode
+    , decode
     ) where
 
 import System.Path.Internal
