@@ -27,20 +27,15 @@ import Data.String (IsString(..))
 import Data.Text (Text)
 import GHC.IO.Encoding (getLocaleEncoding)
 import GHC.IO.Handle (noNewlineTranslation)
-import qualified Data.Text as Text
 import qualified Data.Text.Encoding.Locale as Text
-
-#ifndef __WINDOWS__
-import qualified Data.ByteString as ByteString
-#endif
+import qualified System.PathName as PathName
+import System.PathName.Internal (PathName(..), pathName)
 
 #ifdef __POSIX__
-import qualified System.Posix.ByteString as Posix
-import qualified System.Posix.FilePath as Posix
+import qualified Data.ByteString as ByteString
 #else
+import qualified Data.Text as Text
 import qualified Data.Text.Encoding as Text
-import qualified System.Directory as FilePath
-import qualified System.FilePath as FilePath
 #endif
 
 -- * Mono
@@ -263,6 +258,25 @@ unicode = chunk . Unicode
 name :: Name -> Builder
 name = chunk . Name
 
+-- | Construct a 'PathName' from a 'Builder' using the system locale.
+locale :: Builder -> IO PathName
+locale builder = do
+    encoding <- getLocaleEncoding
+#ifdef __POSIX__
+    let c (ASCII b) = return b
+        c (Unicode t) = Text.encodeLocale' encoding noNewlineTranslation t
+        c (Name (ByteString b)) = return b
+        c (Name (Text t)) = c (Unicode t)
+    pathName . ByteString.concat <$> mapM c (runBuilder builder)
+#else
+    let c (ASCII b) = return (Text.decodeLatin1 b)
+        c (Unicode t) = return t
+        c (Name (ByteString b)) =
+            Text.decodeLocale' encoding noNewlineTranslation b
+        c (Name (Text t)) = return t
+    pathName . Text.unpack . Text.concat <$> mapM c (runBuilder builder)
+#endif
+
 -- * Representation
 
 -- | Syntax for representing a path in readable form.
@@ -298,58 +312,6 @@ render repr (Cons e a) =
     r Posix (FileExtension n) = ascii "." <> name n
     r Windows (FileExtension n) = unicode "." <> name n
 
--- * PrimitivePath
-
--- | The internal type behind 'PathName', which depends on the platform and the
--- build flags.
-type PrimitivePath =
-#ifdef __POSIX__
-    Posix.RawFilePath
-#else
-    FilePath.FilePath
-#endif
-
--- * PathName
-
--- | A concrete path on the local filesystem.
-newtype PathName = PathName PrimitivePath deriving (Eq, Ord, Show)
-
--- | Map a function over the 'PrimitivePath' inside a 'PathName'.
-mapPathName :: (PrimitivePath -> PrimitivePath) -> PathName -> PathName
-mapPathName f (PathName a) = PathName (f a)
-
--- | Append a 'PathName' to another.
-append :: PathName -> PathName -> PathName
-append (PathName a) = mapPathName (a <>)
-
--- | Construct a 'PathName' and ensure it ends with a path separator.
-dirName :: PrimitivePath -> PathName
-dirName = PathName .
-#ifdef __POSIX__
-    Posix.addTrailingPathSeparator
-#else
-    FilePath.addTrailingPathSeparator
-#endif
-
--- | Construct a 'PathName' from a 'Builder' using the system locale.
-locale :: Builder -> IO PathName
-locale builder = do
-    encoding <- getLocaleEncoding
-#ifdef __POSIX__
-    let c (ASCII b) = return b
-        c (Unicode t) = Text.encodeLocale' encoding noNewlineTranslation t
-        c (Name (ByteString b)) = return b
-        c (Name (Text t)) = c (Unicode t)
-    PathName . ByteString.concat <$> mapM c (runBuilder builder)
-#else
-    let c (ASCII b) = return (Text.decodeLatin1 b)
-        c (Unicode t) = return t
-        c (Name (ByteString b)) =
-            Text.decodeLocale' encoding noNewlineTranslation b
-        c (Name (Text t)) = return t
-    PathName . Text.unpack . Text.concat <$> mapM c (runBuilder builder)
-#endif
-
 -- * Resolve
 
 -- | Resolve the edge from a native root vertex into a concrete 'PathName' for
@@ -365,21 +327,10 @@ instance Resolve Drive where
     resolve = locale . render native . edge
 
 instance Resolve Home where
-    resolve _ = dirName <$>
-#ifdef __POSIX__
-        do Just homeDir <- Posix.getEnv "HOME"
-           return homeDir
-#else
-        FilePath.getHomeDirectory
-#endif
+    resolve _ = PathName.getHomeDirectory
 
 instance Resolve Working where
-    resolve _ = dirName <$>
-#ifdef __POSIX__
-        Posix.getWorkingDirectory
-#else
-        FilePath.getCurrentDirectory
-#endif
+    resolve _ = PathName.getCurrentDirectory
 
 -- * Reify
 
@@ -391,38 +342,5 @@ instance Reify PathName where
     reify = return
 
 instance (Resolve a, NonEmpty a b) => Reify (Path a b) where
-    reify (Cons e es) = append <$> resolve e <*> locale (render native es)
+    reify (Cons e es) = mappend <$> resolve e <*> locale (render native es)
     reify _ = fail "impossible"
-
--- | Reify a path to bytes.  Text components will be encoded using the system
--- locale encoding.
-encode :: (Reify a) => a -> IO ByteString
-encode p = do
-    PathName path <- reify p
-#ifdef __POSIX__
-    return . Posix.dropTrailingPathSeparator $ path
-#else
-    encoding <- getLocaleEncoding
-    let encode' = Text.encodeLocale' encoding noNewlineTranslation . Text.pack
-#ifdef __WINDOWS__
-    encode' . FilePath.dropTrailingPathSeparator $ path
-#else
-    let ps = "" : tail (FilePath.splitDirectories path)
-    bs <- mapM encode' ps
-    return . ByteString.concat . map ("/" <>) $ bs
-#endif
-#endif
-
--- | Reify a path to text.  Bytes components will be decoded using the system
--- locale encoding.
-decode :: (Reify a) => a -> IO Text
-decode p = do
-    PathName path <- reify p
-#ifdef __POSIX__
-    let ps = "" : tail (Posix.splitDirectories path)
-    encoding <- getLocaleEncoding
-    ts <- mapM (Text.decodeLocale' encoding noNewlineTranslation) ps
-    return . Text.concat . map ("/" <>) $ ts
-#else
-    return . Text.pack . FilePath.dropTrailingPathSeparator $ path
-#endif

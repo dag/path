@@ -3,7 +3,9 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeOperators #-}
 
 module Main (main) where
@@ -13,6 +15,8 @@ import Data.Monoid (Monoid(..), (<>))
 import Data.Proxy (Proxy(..))
 import System.Path
 import System.Path.Core (Path(Nil))
+import System.PathName ()
+import System.PathName.Internal
 import Test.Hspec (Spec, hspec, describe)
 import Test.Hspec.QuickCheck (prop)
 import Test.QuickCheck (Arbitrary(..), oneof, listOf)
@@ -48,6 +52,9 @@ instance Arbitrary (Path Directory File) where
 
 instance Arbitrary (Path File File) where
     arbitrary = mconcat <$> listOf (ext <$> arbitrary)
+
+deriving instance Arbitrary PathName
+deriving instance Arbitrary FileName
 
 category :: forall a b c d.
     ( Arbitrary (a </> b)
@@ -123,3 +130,9 @@ main = hspec $ do
         category (Proxy :: Proxy (File </> File))
             (Proxy :: Proxy (File </> File))
         monoid (Proxy :: Proxy (File </> File))
+
+    describe "PathName" $
+        monoid (Proxy :: Proxy PathName)
+
+    describe "FileName" $
+        monoid (Proxy :: Proxy FileName)

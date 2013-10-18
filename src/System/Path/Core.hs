@@ -37,11 +37,8 @@ module System.Path.Core
     , file
     , ext
       -- * PathName
-    , PathName
     , Resolve(..)
     , Reify(..)
-    , encode
-    , decode
     ) where
 
 import System.Path.Internal

@@ -30,9 +30,11 @@ FLAG posix
     manual: True
 
 LIBRARY
-    exposed-modules: System.Path.Internal
-    exposed-modules: System.Path.Core
     exposed-modules: System.Path
+    exposed-modules: System.Path.Core
+    exposed-modules: System.Path.Internal
+    exposed-modules: System.PathName
+    exposed-modules: System.PathName.Internal
 
     other-extensions: ConstraintKinds
     other-extensions: CPP
@@ -52,6 +54,7 @@ LIBRARY
     build-depends: bytestring >=0.10 && <0.11
     build-depends: text >=0.11 && <0.12
     build-depends: text-locale-encoding >=0.1 && <0.2
+    build-depends: time >=1.4 && <1.5
 
     if flag(posix) && !os(windows)
         build-depends: posix-paths >=0.1 && <0.2
@@ -103,6 +106,7 @@ TEST-SUITE hspec-posix
         build-depends: tagged
         build-depends: text
         build-depends: text-locale-encoding
+        build-depends: time
         build-depends: unix >=2.6 && <2.7
 
     cpp-options: -D__POSIX__
@@ -126,6 +130,7 @@ TEST-SUITE hspec-non-posix
     build-depends: tagged
     build-depends: text
     build-depends: text-locale-encoding
+    build-depends: time
 
     if os(windows)
         cpp-options: -D__WINDOWS__

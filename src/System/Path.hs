@@ -27,7 +27,6 @@ module System.Path
     , ext
       -- * Opaque filesystem pathname
       -- $pathname
-    , PathName
     , Reify
     ) where
 

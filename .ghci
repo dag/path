@@ -1,3 +1,9 @@
+:def path \_ -> return ":load System.Path.Internal"
+:def pathname \_ -> return ":load System.PathName.Internal"
+
 :set -XDataKinds
 :set -XOverloadedStrings
 :set -XTypeOperators
+
+import Control.Applicative
+import Data.Monoid
