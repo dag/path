@@ -1,3 +1,5 @@
+language: haskell
+
 env:
     - GHCVER=7.6.1
     - GHCVER=7.6.2
