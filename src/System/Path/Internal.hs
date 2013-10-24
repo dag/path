@@ -4,7 +4,6 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -22,21 +21,11 @@ module System.Path.Internal where
 import Control.Applicative ((<$>), (<*>))
 import Data.ByteString (ByteString)
 import Data.Function (on)
-import Data.Monoid (Monoid(..), Endo(..), (<>))
+import Data.Monoid (Monoid(..))
 import Data.String (IsString(..))
 import Data.Text (Text)
-import GHC.IO.Encoding (getLocaleEncoding)
-import GHC.IO.Handle (noNewlineTranslation)
-import qualified Data.Text.Encoding.Locale as Text
 import qualified System.PathName as PathName
-import System.PathName.Internal (PathName(..), pathName)
-
-#ifdef __POSIX__
-import qualified Data.ByteString as ByteString
-#else
-import qualified Data.Text as Text
-import qualified Data.Text.Encoding as Text
-#endif
+import System.PathName.Internal (PathName(..))
 
 -- * Mono
 
@@ -52,6 +41,11 @@ data Name = ByteString !ByteString | Text !Text deriving (Eq, Ord, Show)
 
 instance IsString Name where
     fromString = Text . fromString
+
+-- | Make an 'Either' out of a 'Name'.
+name :: Name -> Either ByteString Text
+name (ByteString bs) = Left bs
+name (Text ts) = Right ts
 
 -- * Vertex
 
@@ -163,6 +157,17 @@ instance Mono (Path a b) where
     mono Nil = []
     mono (Cons e p) = mono e : mono p
 
+-- | Extract directory and filename components from a 'Path'.
+components :: a </> b -> ([Either ByteString Text], [Either ByteString Text])
+components Nil = ([], [])
+components (Cons e es) = case e of
+    DirectoryName n -> (name n : ps, fs)
+    FileName n -> (ps, name n : fs)
+    FileExtension n -> (ps, name n : fs)
+    _ -> (ps, fs)
+  where
+    (ps, fs) = components es
+
 -- | Concatenate two paths.
 (</>) :: a </> b -> b </> c -> a </> c
 Nil </> b = b
@@ -212,106 +217,6 @@ file = edge . FileName
 ext :: Name -> File </> File
 ext = edge . FileExtension
 
--- * Chunk
-
--- | Segments of a path representation.
-data Chunk
-    = ASCII !ByteString
-      -- ^ Pass-through on encode; decode as ASCII.
-    | Unicode !Text
-      -- ^ Encode as appropriate; pass-through on decode.
-    | Name !Name
-      -- ^ Validate and encode/decode as appropriate.
-  deriving (Eq, Ord, Show)
-
--- * Builder
-
--- | Difference list monoid for assembling chunks efficiently.
-newtype Builder = Builder (Endo [Chunk]) deriving (Monoid)
-
-instance Eq Builder where
-    (==) = (==) `on` runBuilder
-
-instance Ord Builder where
-    compare = compare `on` runBuilder
-
-instance Show Builder where
-    show = show . runBuilder
-
--- | Apply a 'Builder' to construct the final 'Chunk' list.
-runBuilder :: Builder -> [Chunk]
-runBuilder (Builder endo) = appEndo endo []
-
--- | The singleton 'Builder' primitive.
-chunk :: Chunk -> Builder
-chunk c = Builder (Endo (c :))
-
--- | Construct a 'Builder' for a 'ASCII' 'Chunk'.
-ascii :: ByteString -> Builder
-ascii = chunk . ASCII
-
--- | Construct a 'Builder' for a 'Unicode' 'Chunk'.
-unicode :: Text -> Builder
-unicode = chunk . Unicode
-
--- | Construct a 'Builder' for a 'Name' 'Chunk'.
-name :: Name -> Builder
-name = chunk . Name
-
--- | Construct a 'PathName' from a 'Builder' using the system locale.
-locale :: Builder -> IO PathName
-locale builder = do
-    encoding <- getLocaleEncoding
-#ifdef __POSIX__
-    let c (ASCII b) = return b
-        c (Unicode t) = Text.encodeLocale' encoding noNewlineTranslation t
-        c (Name (ByteString b)) = return b
-        c (Name (Text t)) = c (Unicode t)
-    pathName . ByteString.concat <$> mapM c (runBuilder builder)
-#else
-    let c (ASCII b) = return (Text.decodeLatin1 b)
-        c (Unicode t) = return t
-        c (Name (ByteString b)) =
-            Text.decodeLocale' encoding noNewlineTranslation b
-        c (Name (Text t)) = return t
-    pathName . Text.unpack . Text.concat <$> mapM c (runBuilder builder)
-#endif
-
--- * Representation
-
--- | Syntax for representing a path in readable form.
-data Representation = Posix | Windows deriving (Eq, Ord, Show)
-
--- | The native 'Representation' of the platform.
-native :: Representation
-#ifdef __WINDOWS__
-native = Windows
-#else
-native = Posix
-#endif
-
--- | Render a path to a 'Representation' intended for humans.
-render :: Representation -> a </> b -> Builder
-render _ Nil = mempty
-render repr (Cons e a) =
-    r repr e <> render repr a
-  where
-    r Posix RootDirectory = ascii "/"
-    r Windows RootDirectory = unicode "\\"
-    r Posix (DriveName n) = ascii "/" <> name n <> ascii ":" <> ascii "/"
-    r Windows (DriveName n) = name n <> unicode ":\\"
-    r Posix (HostName n) = name n <> ascii ":" <> ascii "/"
-    r Windows (HostName n) = unicode "\\\\" <> name n <> unicode "\\"
-    r Posix HomeDirectory = ascii "~" <> ascii "/"
-    r Windows HomeDirectory = unicode "%UserProfile%\\"
-    r Posix WorkingDirectory = ascii "." <> ascii "/"
-    r Windows WorkingDirectory = unicode ".\\"
-    r Posix (DirectoryName n) = name n <> ascii "/"
-    r Windows (DirectoryName n) = name n <> unicode "\\"
-    r _ (FileName n) = name n
-    r Posix (FileExtension n) = ascii "." <> name n
-    r Windows (FileExtension n) = unicode "." <> name n
-
 -- * Resolve
 
 -- | Resolve the edge from a native root vertex into a concrete 'PathName' for
@@ -321,10 +226,13 @@ class (Rooted a, Native a) => Resolve a where
 
 #ifndef __WINDOWS__
 instance Resolve Root where
+    resolve _ = return (PathName "/")
 #else
 instance Resolve Drive where
+    resolve (DriveName n) = do
+        PathName p <- PathName.build [name n] []
+        return $ PathName (mappend p ":")
 #endif
-    resolve = locale . render native . edge
 
 instance Resolve Home where
     resolve _ = PathName.getHomeDirectory
@@ -342,5 +250,7 @@ instance Reify PathName where
     reify = return
 
 instance (Resolve a, NonEmpty a b) => Reify (Path a b) where
-    reify (Cons e es) = mappend <$> resolve e <*> locale (render native es)
+    reify (Cons e es) = mappend
+        <$> resolve e
+        <*> uncurry PathName.build (components es)
     reify _ = fail "impossible"
