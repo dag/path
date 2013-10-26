@@ -19,13 +19,14 @@
 module System.Path.Internal where
 
 import Control.Applicative ((<$>), (<*>))
+import Control.Monad ((<=<))
 import Data.ByteString (ByteString)
 import Data.Function (on)
 import Data.Monoid (Monoid(..))
 import Data.String (IsString(..))
 import Data.Text (Text)
 import qualified System.PathName as PathName
-import System.PathName.Internal (PathName(..))
+import System.PathName.Internal (PathName(..), FileName(getFileName))
 
 -- * Mono
 
@@ -217,40 +218,65 @@ file = edge . FileName
 ext :: Name -> File </> File
 ext = edge . FileExtension
 
--- * Resolve
+-- * RealPath
 
--- | Resolve the edge from a native root vertex into a concrete 'PathName' for
--- the corresponding directory.
-class (Rooted a, Native a) => Resolve a where
-    resolve :: a ->- b -> IO PathName
+-- | A canonicalized absolute pathname.
+newtype RealPath = RealPath { unRealPath :: PathName } deriving (Eq, Ord)
 
-#ifndef __WINDOWS__
-instance Resolve Root where
-    resolve _ = return (PathName "/")
-#else
-instance Resolve Drive where
-    resolve (DriveName n) = do
-        PathName p <- PathName.build [name n] []
-        return $ PathName (mappend p ":")
-#endif
+instance Show RealPath where
+    showsPrec d x = showsPrec d (unRealPath x)
 
-instance Resolve Home where
-    resolve _ = PathName.getHomeDirectory
-
-instance Resolve Working where
-    resolve _ = PathName.getCurrentDirectory
+-- | Get a 'PathName' corresponding to the given 'RealPath'.  To go the other
+-- way you need to use 'Resolve'.
+getRealPath :: RealPath -> PathName
+getRealPath = unRealPath
 
 -- * Reify
 
--- | Reify paths into a concrete 'PathName'.
+-- | Reify an abstract path into a concrete 'PathName'.
 class Reify a where
     reify :: a -> IO PathName
 
 instance Reify PathName where
     reify = return
 
-instance (Resolve a, NonEmpty a b) => Reify (Path a b) where
+instance Reify FileName where
+    reify = reify . getFileName
+
+instance Reify RealPath where
+    reify = reify . getRealPath
+
+instance (Rooted a, Native a, NonEmpty a b) => Reify (Path a b) where
     reify (Cons e es) = mappend
-        <$> resolve e
+        <$> rooted e
         <*> uncurry PathName.build (components es)
+      where
+#ifndef __WINDOWS__
+        rooted RootDirectory = return (PathName "/")
+#else
+        rooted (DriveName n) = do
+            PathName p <- PathName.build [name n] []
+            return $ PathName (mappend p ":")
+#endif
+        rooted HomeDirectory = PathName.getHomeDirectory
+        rooted WorkingDirectory = PathName.getCurrentDirectory
+        rooted _ = fail "impossible"
     reify _ = fail "impossible"
+
+-- * Resolve
+
+-- | Resolve an abstract path into a canonicalized absolute 'RealPath'.
+class Resolve a where
+    resolve :: a -> IO RealPath
+
+instance Resolve RealPath where
+    resolve = return
+
+instance Resolve PathName where
+    resolve = fmap RealPath . PathName.canonicalizePath
+
+instance Resolve FileName where
+    resolve = resolve <=< reify
+
+instance (Rooted a, Native a, NonEmpty a b) => Resolve (Path a b) where
+    resolve = resolve <=< reify

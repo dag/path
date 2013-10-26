@@ -36,9 +36,11 @@ module System.Path.Core
     , dir
     , file
     , ext
-      -- * PathName
-    , Resolve(..)
+      -- * RealPath
+    , RealPath
+    , getRealPath
     , Reify(..)
+    , Resolve(..)
     ) where
 
 import System.Path.Internal
