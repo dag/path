@@ -90,11 +90,7 @@ instance Monoid PathName where
     mappend = combine
     mconcat = joinPath
 
--- | Smart 'PathName' constructor.
-pathName :: Backend -> PathName
-pathName = unsafeCoerce dropTrailingPathSeparator
-
--- * Extension
+-- * FileName
 
 -- | Filename extension monoid.  Unlike 'addExtension', 'mempty' is the
 -- identity.
