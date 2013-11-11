@@ -36,10 +36,9 @@ module System.Path.Core
     , dir
     , file
     , ext
-      -- * RealPath
-    , RealPath
-    , getRealPath
-    , Reify(..)
+      -- * ResolvedPath
+    , ResolvedPath
+    , Reference(..)
     , Resolve(..)
     ) where
 

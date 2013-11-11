@@ -2,6 +2,7 @@
 
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE Unsafe #-}
 
 -- |
@@ -23,6 +24,7 @@ import qualified Data.Text as Text
 import qualified Data.Text.Encoding.Locale as Text
 
 #ifdef __POSIX__
+import qualified Data.List as List
 import qualified Data.Text.Encoding as Text
 import qualified Data.Time.Clock.POSIX as Backend
 import qualified System.IO.Error as IO
@@ -103,6 +105,43 @@ instance Monoid FileName where
         | a == mempty = b
         | b == mempty = a
         | otherwise = unsafeCoerce addExtension a b
+
+-- * Reify
+
+-- | Reify an abstract path into a concrete 'PathName'.
+class Reify path where
+    reify :: path -> IO PathName
+
+instance Reify PathName where
+    reify = return
+
+instance Reify FileName where
+    reify = return . getFileName
+
+#ifdef __POSIX__
+-- | 'Backend.RawFilePath'
+instance Reify ByteString where
+    reify = return . PathName
+#else
+-- | @RawFilePath@
+instance Reify ByteString where
+    reify b = build [Left b] []
+#endif
+
+-- | 'FilePath'
+instance (a ~ Char) => Reify [a] where
+#ifdef __POSIX__
+    reify s = build [Right (Text.pack s)] []
+#else
+    reify = return . PathName
+#endif
+
+instance Reify Text where
+#ifdef __POSIX__
+    reify t = build [Right t] []
+#else
+    reify = return . PathName . Text.unpack
+#endif
 
 -- * Encoding
 
@@ -243,7 +282,20 @@ isRelative = unsafeCoerce Backend.isRelative
 joinPath :: [PathName] -> PathName
 joinPath = unsafeCoerce Backend.joinPath
 
--- makeRelative :: PathName -> PathName -> PathName
+makeRelative :: PathName -> PathName -> PathName
+#ifdef __POSIX__
+-- ^ 'List.stripPrefix'
+makeRelative root path
+    | rs == ps = PathName "."
+    | otherwise = maybe path joinPath (List.stripPrefix rs ps)
+  where
+    rs = splitDirectories root
+    ps = splitDirectories path
+#else
+-- ^ 'Backend.makeRelative'
+makeRelative = unsafeCoerce Backend.makeRelative
+#endif
+
 -- makeValid :: PathName -> PathName
 -- normalise :: PathName -> PathName
 -- pathSeparator :: Char
@@ -431,7 +483,17 @@ getModificationTime = unsafeCoerce Backend.getModificationTime
 -- getPermissions :: PathName -> IO Permissions
 -- getTemporaryDirectory :: IO PathName
 -- getUserDocumentsDirectory :: IO PathName
--- makeRelativeToCurrentDirectory :: PathName -> IO PathName
+
+makeRelativeToCurrentDirectory :: PathName -> IO PathName
+#ifdef __POSIX__
+-- ^ 'makeRelative' to 'getCurrentDirectory'
+makeRelativeToCurrentDirectory path =
+    fmap (flip makeRelative path) getCurrentDirectory
+#else
+-- ^ 'Backend.makeRelativeToCurrentDirectory'
+makeRelativeToCurrentDirectory =
+    unsafeCoerce Backend.makeRelativeToCurrentDirectory
+#endif
 
 -- | 'Backend.removeDirectory'
 removeDirectory :: PathName -> IO ()

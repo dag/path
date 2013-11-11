@@ -27,7 +27,9 @@ module System.Path
     , ext
       -- * Opaque filesystem pathname
       -- $pathname
-    , Reify
+    , ResolvedPath
+    , Reference(..)
+    , Resolve(..)
     ) where
 
 import System.Path.Core

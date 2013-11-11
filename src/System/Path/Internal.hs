@@ -22,11 +22,11 @@ import Control.Applicative ((<$>), (<*>))
 import Control.Monad ((<=<))
 import Data.ByteString (ByteString)
 import Data.Function (on)
-import Data.Monoid (Monoid(..))
+import Data.Monoid (Monoid(..), (<>))
 import Data.String (IsString(..))
 import Data.Text (Text)
 import qualified System.PathName as PathName
-import System.PathName.Internal (PathName(..), FileName(getFileName))
+import System.PathName.Internal (PathName(..))
 
 -- * Mono
 
@@ -158,6 +158,20 @@ instance Mono (Path a b) where
     mono Nil = []
     mono (Cons e p) = mono e : mono p
 
+instance PathName.Reify (Path a b) where
+    reify Nil = return mempty
+    reify es@(Cons e _) = mappend
+        <$> rooted e
+        <*> uncurry PathName.build (components es)
+      where
+        rooted RootDirectory = return (PathName "/")
+        rooted (DriveName n) = do
+            PathName p <- PathName.build [name n] []
+            return $ PathName (mappend p ":")
+        rooted HomeDirectory = PathName.getHomeDirectory
+        rooted WorkingDirectory = PathName.getCurrentDirectory
+        rooted _ = return mempty
+
 -- | Extract directory and filename components from a 'Path'.
 components :: a </> b -> ([Either ByteString Text], [Either ByteString Text])
 components Nil = ([], [])
@@ -218,65 +232,67 @@ file = edge . FileName
 ext :: Name -> File </> File
 ext = edge . FileExtension
 
--- * RealPath
+-- * Reference
 
--- | A canonicalized absolute pathname.
-newtype RealPath = RealPath { unRealPath :: PathName } deriving (Eq, Ord)
+-- | How a 'ResolvedPath' was resolved.
+data Reference = Relative | Absolute | Canonical deriving (Eq, Ord, Show)
 
-instance Show RealPath where
-    showsPrec d x = showsPrec d (unRealPath x)
+-- * ResolvedPath
 
--- | Get a 'PathName' corresponding to the given 'RealPath'.  To go the other
--- way you need to use 'Resolve'.
-getRealPath :: RealPath -> PathName
-getRealPath = unRealPath
+-- | A resolved path with a 'Reference'.
+data ResolvedPath :: Reference -> * where
+    RelativePath :: !PathName -> ResolvedPath Relative
+    AbsolutePath :: !PathName -> ResolvedPath Absolute
+    CanonicalPath :: !PathName -> ResolvedPath Canonical
 
--- * Reify
+deriving instance Eq (ResolvedPath ref)
 
--- | Reify an abstract path into a concrete 'PathName'.
-class Reify a where
-    reify :: a -> IO PathName
+instance Ord (ResolvedPath ref) where
+    compare = compare `on` mono
 
-instance Reify PathName where
-    reify = return
+instance Show (ResolvedPath ref) where
+    showsPrec d x = showsPrec d (snd (mono x))
 
-instance Reify FileName where
-    reify = reify . getFileName
+instance Mono (ResolvedPath ref) where
+    type Monomorphic (ResolvedPath ref) = (Reference, PathName)
+    mono (RelativePath pn) = (Relative, pn)
+    mono (AbsolutePath pn) = (Absolute, pn)
+    mono (CanonicalPath pn) = (Canonical, pn)
 
-instance Reify RealPath where
-    reify = reify . getRealPath
-
-instance (Rooted a, Native a, NonEmpty a b) => Reify (Path a b) where
-    reify (Cons e es) = mappend
-        <$> rooted e
-        <*> uncurry PathName.build (components es)
-      where
-#ifndef __WINDOWS__
-        rooted RootDirectory = return (PathName "/")
-#else
-        rooted (DriveName n) = do
-            PathName p <- PathName.build [name n] []
-            return $ PathName (mappend p ":")
-#endif
-        rooted HomeDirectory = PathName.getHomeDirectory
-        rooted WorkingDirectory = PathName.getCurrentDirectory
-        rooted _ = fail "impossible"
-    reify _ = fail "impossible"
+instance PathName.Reify (ResolvedPath ref) where
+    reify = return . snd . mono
 
 -- * Resolve
 
--- | Resolve an abstract path into a canonicalized absolute 'RealPath'.
-class Resolve a where
-    resolve :: a -> IO RealPath
+-- | Resolve a path into a 'ResolvedPath', remembering the 'Reference'.
+class Resolve path where
+    relative :: path -> IO (ResolvedPath Relative)
+    absolute :: path -> IO (ResolvedPath Absolute)
+    canonical :: path -> IO (ResolvedPath Canonical)
 
-instance Resolve RealPath where
-    resolve = return
-
-instance Resolve PathName where
-    resolve = fmap RealPath . PathName.canonicalizePath
-
-instance Resolve FileName where
-    resolve = resolve <=< reify
+instance Resolve (ResolvedPath ref) where
+    relative rp = case rp of
+        RelativePath _ -> return rp
+        _ -> do
+            pn <- PathName.makeRelativeToCurrentDirectory
+                <=< PathName.reify $ rp
+            if PathName.isRelative pn then
+                return (RelativePath pn)
+            else
+                {- TODO proper Exception or traverse upwards with "../" -}
+                fail "System.Path.resolve: cwd not parent of path"
+    absolute rp = case rp of
+        RelativePath pn -> AbsolutePath . (<> pn)
+            <$> PathName.getCurrentDirectory
+        AbsolutePath _ -> return rp
+        CanonicalPath pn -> return (AbsolutePath pn)
+    canonical rp = case rp of
+        RelativePath _ -> canonical <=< absolute $ rp
+        AbsolutePath pn -> CanonicalPath <$> PathName.canonicalizePath pn
+        CanonicalPath _ -> return rp
 
 instance (Rooted a, Native a, NonEmpty a b) => Resolve (Path a b) where
-    resolve = resolve <=< reify
+    relative = relative <=< absolute
+    absolute = fmap AbsolutePath . PathName.reify
+    canonical = fmap CanonicalPath . PathName.canonicalizePath
+        <=< PathName.reify

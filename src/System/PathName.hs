@@ -9,6 +9,7 @@ module System.PathName
     ( -- * @PathName@
       PathName
     , FileName(..)
+    , Reify(..)
     , build
     , decode
     , encode
@@ -37,7 +38,7 @@ module System.PathName
     -- , isValid
     -- , joinDrive
     , joinPath
-    -- , makeRelative
+    , makeRelative
     -- , makeValid
     -- , normalise
     -- , pathSeparator
@@ -100,7 +101,7 @@ module System.PathName
     -- , getPermissions
     -- , getTemporaryDirectory
     -- , getUserDocumentsDirectory
-    -- , makeRelativeToCurrentDirectory
+    , makeRelativeToCurrentDirectory
     , removeDirectory
     -- , removeDirectoryRecursive
     , removeFile
