@@ -5,6 +5,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -129,14 +130,11 @@ instance Mono (Edge a b) where
 
 -- * Path
 
--- | Infix 'Path' type operator.
-type (</>) = Path
-
 -- | A path between vertices in the filesystem graph as a sequence of edges,
 -- forming a free category under concatenation.
 data Path :: Vertex -> Vertex -> * where
-    Nil :: a </> a
-    Cons :: a ->- b -> b </> c -> a </> c
+    Nil :: Path a a
+    Cons :: a ->- b -> Path b c -> Path a c
 
 instance Eq (Path a b) where
     (==) = (==) `on` mono
@@ -151,7 +149,7 @@ instance (b ~ a) => Monoid (Path a b) where
     mappend = (</>)
 
 instance (a ~ Directory, b ~ a) => IsString (Path a b) where
-    fromString = dir . fromString
+    fromString = edge . DirectoryName . fromString
 
 instance Mono (Path a b) where
     type Monomorphic (Path a b) = [(Maybe Name, Vertex, Vertex)]
@@ -173,7 +171,7 @@ instance PathName.Reify (Path a b) where
         rooted _ = return mempty
 
 -- | Extract directory and filename components from a 'Path'.
-components :: a </> b -> ([Either ByteString Text], [Either ByteString Text])
+components :: Path a b -> ([Either ByteString Text], [Either ByteString Text])
 components Nil = ([], [])
 components (Cons e es) = case e of
     DirectoryName n -> (name n : ps, fs)
@@ -184,53 +182,60 @@ components (Cons e es) = case e of
     (ps, fs) = components es
 
 -- | Concatenate two paths.
-(</>) :: a </> b -> b </> c -> a </> c
+(</>) :: Path a b -> Path b c -> Path a c
 Nil </> b = b
 Cons e a </> b = Cons e (a </> b)
 
 -- | Prepend a 'drive' name to a path.
-(<:>) :: Name -> Directory </> b -> Drive </> b
-n <:> b = drive n </> b
+(<:>) :: Name -> Path Directory b -> Path Drive b
+n <:> b = edge (DriveName n) </> b
 
 -- | Append a file extension to a file path.
-(<.>) :: a </> File -> Name -> a </> File
-a <.> n = a </> ext n
+(<.>) :: Path a File -> Name -> Path a File
+a <.> n = a </> edge (FileExtension n)
 
 -- | Construct a 'Path' from an 'Edge'.
-edge :: a ->- b -> a </> b
+edge :: a ->- b -> Path a b
 edge = flip Cons Nil
+
+-- | Difference path of the 'Path' category.
+type a </> b = forall c. Path b c -> Path a c
+
+-- | Construct a 'Path' from a difference path.
+path :: (Path a a -> Path b c) -> Path b c
+path = ($ Nil)
 
 -- | The root directory.
 root :: Root </> Directory
-root = edge RootDirectory
+root = Cons RootDirectory
 
 -- | A drive letter / device name.
 drive :: Name -> Drive </> Directory
-drive = edge . DriveName
+drive = Cons . DriveName
 
 -- | A remote host.
 host :: Name -> Remote </> Directory
-host = edge . HostName
+host = Cons . HostName
 
 -- | The home directory of the current user.
 home :: Home </> Directory
-home = edge HomeDirectory
+home = Cons HomeDirectory
 
 -- | The current working directory.
 cwd :: Working </> Directory
-cwd = edge WorkingDirectory
+cwd = Cons WorkingDirectory
 
 -- | A directory.
 dir :: Name -> Directory </> Directory
-dir = edge . DirectoryName
+dir = Cons . DirectoryName
 
 -- | A file name.
 file :: Name -> Directory </> File
-file = edge . FileName
+file = Cons . FileName
 
 -- | A file extension.
 ext :: Name -> File </> File
-ext = edge . FileExtension
+ext = Cons . FileExtension
 
 -- * Reference
 

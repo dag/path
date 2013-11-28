@@ -17,6 +17,7 @@ module System.Path
     , (</>)
     , (<:>)
     , (<.>)
+    , path
     , root
     , drive
     , host

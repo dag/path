@@ -28,6 +28,7 @@ module System.Path.Core
     , (<:>)
     , (<.>)
       -- ** Combinators
+    , path
     , root
     , drive
     , host
