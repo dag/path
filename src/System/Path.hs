@@ -11,7 +11,7 @@ module System.Path
     ( -- * Abstract path category
       -- $path
       Path
-    , Vertex(..)
+    , File(..)
     , Name(..)
     , type (</>)
     , (</>)

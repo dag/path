@@ -12,8 +12,8 @@
 module System.Path.Core
     ( -- * Path
       Path(..)
-    , Edge(..)
-    , Vertex(..)
+    , Link(..)
+    , File(..)
     , Name(..)
       -- ** Type level
     , type (</>)

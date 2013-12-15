@@ -43,14 +43,14 @@ instance Arbitrary (Path Working Directory) where
 instance Arbitrary (Path Directory Directory) where
     arbitrary = mconcat <$> listOf (dir <$> arbitrary)
 
-instance Arbitrary (Path Directory File) where
+instance Arbitrary (Path Directory Regular) where
     arbitrary = do
         d <- arbitrary
         f <- file <$> arbitrary
         e <- arbitrary
         return (d </> f </> e)
 
-instance Arbitrary (Path File File) where
+instance Arbitrary (Path Regular Regular) where
     arbitrary = mconcat <$> listOf (ext <$> arbitrary)
 
 deriving instance Arbitrary PathName
@@ -86,50 +86,50 @@ main = hspec $ do
     describe "Root </> Directory" $
         category (Proxy :: Proxy (Root </> Directory))
             (Proxy :: Proxy (Directory </> Directory))
-    describe "Root </> File" $
+    describe "Root </> Regular" $
         category (Proxy :: Proxy (Root </> Directory))
-            (Proxy :: Proxy (Directory </> File))
+            (Proxy :: Proxy (Directory </> Regular))
 
     describe "Drive </> Directory" $
         category (Proxy :: Proxy (Drive </> Directory))
             (Proxy :: Proxy (Directory </> Directory))
-    describe "Drive </> File" $
+    describe "Drive </> Regular" $
         category (Proxy :: Proxy (Drive </> Directory))
-            (Proxy :: Proxy (Directory </> File))
+            (Proxy :: Proxy (Directory </> Regular))
 
     describe "Remote </> Directory" $
         category (Proxy :: Proxy (Remote </> Directory))
             (Proxy :: Proxy (Directory </> Directory))
-    describe "Remote </> File" $
+    describe "Remote </> Regular" $
         category (Proxy :: Proxy (Remote </> Directory))
-            (Proxy :: Proxy (Directory </> File))
+            (Proxy :: Proxy (Directory </> Regular))
 
     describe "Home </> Directory" $
         category (Proxy :: Proxy (Home </> Directory))
             (Proxy :: Proxy (Directory </> Directory))
-    describe "Home </> File" $
+    describe "Home </> Regular" $
         category (Proxy :: Proxy (Home </> Directory))
-            (Proxy :: Proxy (Directory </> File))
+            (Proxy :: Proxy (Directory </> Regular))
 
     describe "Working </> Directory" $
         category (Proxy :: Proxy (Working </> Directory))
             (Proxy :: Proxy (Directory </> Directory))
-    describe "Working </> File" $
+    describe "Working </> Regular" $
         category (Proxy :: Proxy (Working </> Directory))
-            (Proxy :: Proxy (Directory </> File))
+            (Proxy :: Proxy (Directory </> Regular))
 
     describe "Directory </> Directory" $ do
         category (Proxy :: Proxy (Directory </> Directory))
             (Proxy :: Proxy (Directory </> Directory))
         monoid (Proxy :: Proxy (Directory </> Directory))
-    describe "Directory </> File" $
+    describe "Directory </> Regular" $
         category (Proxy :: Proxy (Directory </> Directory))
-            (Proxy :: Proxy (Directory </> File))
+            (Proxy :: Proxy (Directory </> Regular))
 
-    describe "File </> File" $ do
-        category (Proxy :: Proxy (File </> File))
-            (Proxy :: Proxy (File </> File))
-        monoid (Proxy :: Proxy (File </> File))
+    describe "Regular </> Regular" $ do
+        category (Proxy :: Proxy (Regular </> Regular))
+            (Proxy :: Proxy (Regular </> Regular))
+        monoid (Proxy :: Proxy (Regular </> Regular))
 
     describe "PathName" $
         monoid (Proxy :: Proxy PathName)
