@@ -1,8 +1,14 @@
 {-# OPTIONS_HADDOCK not-home #-}
 
 {-# LANGUAGE CPP #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE Unsafe #-}
 
 -- |
@@ -13,522 +19,376 @@
 -- Unsafe and unstable internals.
 module System.PathName.Internal where
 
-import Control.Applicative ((<$>))
+import Prelude hiding (appendFile, readFile, writeFile)
+
 import Data.ByteString (ByteString)
-import Data.Monoid (Monoid(..), (<>))
+import Data.Monoid (Monoid(..))
+import Data.String (IsString(..))
 import Data.Text (Text)
 import Data.Time (UTCTime)
-import GHC.IO.Encoding (getLocaleEncoding)
-import GHC.IO.Handle (noNewlineTranslation)
-import qualified Data.Text as Text
-import qualified Data.Text.Encoding.Locale as Text
+import Data.Word (Word8)
+import GHC.TypeLits (Sing)
+import System.IO (Handle, IOMode)
 
+-- * Permissions
+
+data Permissions
+
+-- * Interface
+
+data Interface = Posix | Windows
+
+type System =
 #ifdef __POSIX__
-import qualified Data.List as List
-import qualified Data.Text.Encoding as Text
-import qualified Data.Time.Clock.POSIX as Backend
-import qualified System.IO.Error as IO
-import qualified System.Posix.ByteString as Backend
-import qualified System.Posix.Directory.Traversals as Backend
-import qualified System.Posix.FilePath as Backend
+    Posix
 #else
-import qualified Data.ByteString.Char8 as ByteString
-import qualified System.Directory as Backend
-import qualified System.FilePath as Backend
+    Windows
 #endif
 
-{- The way we use unsafeCoerce here is OK, but it's very easy to get wrong when
- - every little mistake will type check without complaint.  On GHC 7.8 we
- - should use Coercible instead, and then if everything type checks using safe
- - coercions, hopefully it's an indicator that the unsafe coercions (which
- - we'll still need on GHC 7.6) are good too.  Fingers crossed.
- -}
+data instance Sing (k :: Interface) where
+    SPosix :: Sing Posix
+    SWindows :: Sing Windows
 
-import Unsafe.Coerce (unsafeCoerce)
+posix :: Sing Posix
+posix = SPosix
 
--- * Backend
+windows :: Sing Windows
+windows = SWindows
 
-{- It would probably be better to make PathName always wrap a ByteString, and
- - implement the pure functions directly, and then simply decode when necessary
- - for IO operations.  This would enable us to export functions between
- - ByteString and PathName, make the Show instance consistent across platforms,
- - and perhaps even permit an IsString instance (debatable; same issues as the
- - Char8 APIs in bytestring).
- -
- - However, this would more or less require re-implementing (and maintaining)
- - the whole filepath package using bytestrings, and we can't simply copy the
- - code from the posix-paths package since it doesn't handle Windows paths at
- - all.
- -
- - It's tempting to do something isomorphic to:
- -
- -     type Component = Either Text ByteString
- -     type PathName = ([Component], [Component])
- -
- - However, that's pretty much exactly what System.Path is doing.  The
- - motivation for the PathName type is primarily to be a fast and monomorphic
- - cross-platform representation of paths, interfacing the high-level Path type
- - with the low-level filesystem.
- -}
+-- * Component
 
--- | The backend path type.
-type Backend =
-#ifdef __POSIX__
-    Backend.RawFilePath
-#else
-    Backend.FilePath
-#endif
+data Component :: Interface -> * where
+    PosixComponent :: !ByteString -> Component Posix
+    WindowsComponent :: !Text -> Component Windows
+
+deriving instance Eq (Component iface)
+
+deriving instance Ord (Component iface)
+
+deriving instance Show (Component iface)
+
+instance IsString PosixComponent where
+    fromString = PosixComponent . fromString
+
+instance IsString WindowsComponent where
+    fromString = WindowsComponent . fromString
+
+type PosixComponent = Component Posix
+type WindowsComponent = Component Windows
+type SystemComponent = Component System
+
+-- * Separator
+
+data Separator :: Interface -> * where
+    PosixSeparator :: !Word8 -> Separator Posix
+    WindowsSeparator :: !Char -> Separator Windows
+
+deriving instance Eq (Separator iface)
+
+deriving instance Ord (Separator iface)
+
+deriving instance Show (Separator iface)
+
+type PosixSeparator = Separator Posix
+type WindowsSeparator = Separator Windows
+type SystemSeparator = Separator System
 
 -- * PathName
 
--- | A path on the local filesystem.
-newtype PathName = PathName { unPathName :: Backend } deriving (Eq, Ord)
+data PathName :: Interface -> * where
+    PosixPath :: !ByteString -> PathName Posix
+    WindowsPath :: !Text -> PathName Windows
 
-instance Show PathName where
-    showsPrec d x = showsPrec d (unPathName x)
+deriving instance Eq (PathName iface)
 
-instance Monoid PathName where
-    mempty = PathName mempty
+deriving instance Ord (PathName iface)
+
+deriving instance Show (PathName iface)
+
+instance Monoid PosixPath where
+    mempty = PosixPath mempty
     mappend = combine
     mconcat = joinPath
 
--- * FileName
-
--- | Filename extension monoid.  Unlike 'addExtension', 'mempty' is the
--- identity.
-newtype FileName = FileName { getFileName :: PathName }
-  deriving (Eq, Ord, Show)
-
-instance Monoid FileName where
-    mempty = FileName mempty
-    mappend a b
-        | a == mempty = b
-        | b == mempty = a
-        | otherwise = unsafeCoerce addExtension a b
-
--- * Reify
-
--- | Reify an abstract path into a concrete 'PathName'.
-class Reify path where
-    reify :: path -> IO PathName
-
-instance Reify PathName where
-    reify = return
-
-instance Reify FileName where
-    reify = return . getFileName
-
-#ifdef __POSIX__
--- | 'Backend.RawFilePath'
-instance Reify ByteString where
-    reify = return . PathName
-#else
--- | @RawFilePath@
-instance Reify ByteString where
-    reify b = build [Left b] []
-#endif
-
--- | 'FilePath'
-instance (a ~ Char) => Reify [a] where
-#ifdef __POSIX__
-    reify s = build [Right (Text.pack s)] []
-#else
-    reify = return . PathName
-#endif
-
-instance Reify Text where
-#ifdef __POSIX__
-    reify t = build [Right t] []
-#else
-    reify = return . PathName . Text.unpack
-#endif
-
--- * Encoding
-
--- | Build a 'PathName' by processing components with the system locale
--- encoding, and then concatenating them with 'Monoid'.
---
--- >>> encode [Left "/", Right "etc"] [Left "passwd", Right "gz"]
--- "/etc/passwd.gz"
-build
-    :: [Either ByteString Text]  -- ^ 'PathName' components
-    -> [Either ByteString Text]  -- ^ 'FileName' components
-    -> IO PathName
-build ps fs = do
-    encoding <- getLocaleEncoding
-#ifdef __POSIX__
-    let d = return . unsafeCoerce
-        e = unsafeCoerce Text.encodeLocale' encoding nl
-#else
-    let d = fmap (unsafeCoerce . Text.unpack) . Text.decodeLocale' encoding nl
-        e = return . unsafeCoerce Text.unpack
-#endif
-    path <- mconcat <$> mapM (either d e) ps
-    file <- mconcat . unsafeCoerce <$> mapM (either d e) fs
-    return $ dropTrailingPathSeparator (path <> getFileName file)
-  where
-    nl = noNewlineTranslation
-
--- | Decode (if necessary) a 'PathName' to 'Text' using the system locale
--- encoding.
-decode :: PathName -> IO Text
-#ifdef __POSIX__
-decode path = do
-    encoding <- getLocaleEncoding
-    let ps = splitDirectories path
-        nl = noNewlineTranslation
-        d t | bs <- unsafeCoerce t, bs `elem` ["/", "."] =
-                return . Text.decodeLatin1 $ bs
-            | otherwise = unsafeCoerce Text.decodeLocale' encoding nl t
-    ts <- Text.intercalate "/" <$> mapM d ps
-    if isAbsolute path then
-        return . Text.tail $ ts
-    else
-        return ts
-#else
-decode = return . unsafeCoerce Text.pack
-#endif
-
--- | Encode (if necessary) a 'PathName' to a 'ByteString' using the system
--- locale encoding.
-encode :: PathName -> IO ByteString
-encode path = do
-#ifdef __POSIX__
-    return . unsafeCoerce $ path
-#else
-    encoding <- getLocaleEncoding
-    let nl = noNewlineTranslation
-        e b | ts <- unsafeCoerce b, ts `elem` ["/", "."] =
-                return . ByteString.pack . Text.unpack $ ts
-            | otherwise =
-                unsafeCoerce (Text.encodeLocale' encoding nl . Text.pack) b
-#ifdef __WINDOWS__
-    e path
-#else
-    let ps = splitDirectories path
-    bs <- ByteString.intercalate "/" <$> mapM e ps
-    if isAbsolute path then
-        return . ByteString.tail $ bs
-    else
-        return bs
-#endif
-#endif
-
--- * Path manipulation
-
--- (<.>) :: PathName -> PathName -> PathName
--- (</>) :: PathName -> PathName -> PathName
-
--- | 'Backend.addExtension'
-addExtension :: PathName -> PathName -> PathName
-addExtension = unsafeCoerce Backend.addExtension
-
--- | 'Backend.addTrailingPathSeparator'
-addTrailingPathSeparator :: PathName -> PathName
-addTrailingPathSeparator = unsafeCoerce Backend.addTrailingPathSeparator
-
--- | 'Backend.combine'
-combine :: PathName -> PathName -> PathName
-combine = unsafeCoerce Backend.combine
-
--- dropDrive :: PathName -> PathName
-
--- | 'Backend.dropExtension'
-dropExtension :: PathName -> PathName
-dropExtension = unsafeCoerce Backend.dropExtension
-
--- | 'Backend.dropExtensions'
-dropExtensions :: PathName -> PathName
-dropExtensions = unsafeCoerce Backend.dropExtensions
-
--- | 'Backend.dropFileName'
-dropFileName :: PathName -> PathName
-dropFileName = unsafeCoerce Backend.dropFileName
-
--- | 'Backend.dropTrailingPathSeparator'
-dropTrailingPathSeparator :: PathName -> PathName
-dropTrailingPathSeparator = unsafeCoerce Backend.dropTrailingPathSeparator
-
--- equalPathName :: PathName -> PathName -> Bool
--- extSeparator :: Char
--- getSearchPath :: IO [PathName]
--- hasDrive :: PathName -> Bool
-
--- | 'Backend.hasExtension'
-hasExtension :: PathName -> Bool
-hasExtension = unsafeCoerce Backend.hasExtension
-
--- | 'Backend.hasTrailingPathSeparator'
-hasTrailingPathSeparator :: PathName -> Bool
-hasTrailingPathSeparator = unsafeCoerce Backend.hasTrailingPathSeparator
-
--- | 'Backend.isAbsolute'
-isAbsolute :: PathName -> Bool
-isAbsolute = unsafeCoerce Backend.isAbsolute
-
--- isDrive :: PathName -> Bool
--- isExtSeparator :: Char -> Bool
--- isPathSeparator :: Char -> Bool
-
--- | 'Backend.isRelative'
-isRelative :: PathName -> Bool
-isRelative = unsafeCoerce Backend.isRelative
-
--- isSearchPathSeparator :: Char -> Bool
--- isValid :: PathName -> Bool
--- joinDrive :: PathName -> PathName -> PathName
-
--- | 'Backend.joinPath'
-joinPath :: [PathName] -> PathName
-joinPath = unsafeCoerce Backend.joinPath
-
-makeRelative :: PathName -> PathName -> PathName
-#ifdef __POSIX__
--- ^ 'List.stripPrefix'
-makeRelative root path
-    | rs == ps = PathName "."
-    | otherwise = maybe path joinPath (List.stripPrefix rs ps)
-  where
-    rs = splitDirectories root
-    ps = splitDirectories path
-#else
--- ^ 'Backend.makeRelative'
-makeRelative = unsafeCoerce Backend.makeRelative
-#endif
-
--- makeValid :: PathName -> PathName
--- normalise :: PathName -> PathName
--- pathSeparator :: Char
--- pathSeparators :: [Char]
-
--- | 'Backend.replaceBaseName'
-replaceBaseName :: PathName -> PathName -> PathName
-replaceBaseName = unsafeCoerce Backend.replaceBaseName
-
--- | 'Backend.replaceDirectory'
-replaceDirectory :: PathName -> PathName -> PathName
-replaceDirectory = unsafeCoerce Backend.replaceDirectory
-
--- | 'Backend.replaceExtension'
-replaceExtension :: PathName -> PathName -> PathName
-replaceExtension = unsafeCoerce Backend.replaceExtension
-
--- | 'Backend.replaceFileName'
-replaceFileName :: PathName -> PathName -> PathName
-replaceFileName = unsafeCoerce Backend.replaceFileName
-
--- searchPathSeparator :: Char
-
--- | 'Backend.splitDirectories'
-splitDirectories :: PathName -> [PathName]
-splitDirectories = unsafeCoerce Backend.splitDirectories
-
--- splitDrive :: PathName -> (PathName, PathName)
-
--- | 'Backend.splitExtension'
-splitExtension :: PathName -> (PathName, PathName)
-splitExtension = unsafeCoerce Backend.splitExtension
-
--- | 'Backend.splitExtensions'
-splitExtensions :: PathName -> (PathName, PathName)
-splitExtensions = unsafeCoerce Backend.splitExtensions
-
--- | 'Backend.splitFileName'
-splitFileName :: PathName -> (PathName, PathName)
-splitFileName = unsafeCoerce Backend.splitFileName
-
--- | 'Backend.splitPath'
-splitPath :: PathName -> [PathName]
-splitPath = unsafeCoerce Backend.splitPath
-
--- splitSearchPath :: PathName -> [PathName]
-
--- | 'Backend.takeBaseName'
-takeBaseName :: PathName -> PathName
-takeBaseName = unsafeCoerce Backend.takeBaseName
-
--- | 'Backend.takeDirectory'
-takeDirectory :: PathName -> PathName
-takeDirectory = unsafeCoerce Backend.takeDirectory
-
--- takeDrive :: PathName -> PathName
-
--- | 'Backend.takeExtension'
-takeExtension :: PathName -> PathName
-takeExtension = unsafeCoerce Backend.takeExtension
-
--- | 'Backend.takeExtensions'
-takeExtensions :: PathName -> PathName
-takeExtensions = unsafeCoerce Backend.takeExtensions
-
--- | 'Backend.takeFileName'
-takeFileName :: PathName -> PathName
-takeFileName = unsafeCoerce Backend.takeFileName
-
--- * Lenses
-
-{- Taken more or less verbatim from the lens package, which is under the same
- - license as this package (BSD3).  (C) 2012-13 Edward Kmett.
- -}
-
--- (<.>=) :: MonadState s m => ASetter' s PathName -> String -> m ()
--- (<.>~) :: ASetter s a PathName PathName -> String -> s -> a
--- (</>=) :: MonadState s m => ASetter' s PathName -> PathName -> m ()
--- (</>~) :: ASetter s t PathName PathName -> PathName -> s -> t
--- (<<.>=) :: MonadState s m => LensLike' ((,) PathName) s PathName -> String -> m PathName
--- (<<.>~) :: LensLike ((,) PathName) s a PathName PathName -> String -> s -> (PathName, a)
--- (<</>=) :: MonadState s m => LensLike' ((,) PathName) s PathName -> PathName -> m PathName
--- (<</>~) :: LensLike ((,) PathName) s a PathName PathName -> PathName -> s -> (PathName, a)
-
--- | @'basename' :: Lens' 'PathName' 'PathName'@
-basename :: (Functor f) => (PathName -> f PathName) -> PathName -> f PathName
-basename f p = (`addExtension` takeExtension p) . (takeDirectory p `mappend`)
-    <$> f (takeBaseName p)
-
--- | @'directory' :: Lens' 'PathName' 'PathName'@
-directory :: (Functor f) => (PathName -> f PathName) -> PathName -> f PathName
-directory f p = (`combine` takeFileName p) <$> f (takeDirectory p)
-
--- | @'extension' :: Lens' 'PathName' 'PathName'@
-extension :: (Functor f) => (PathName -> f PathName) -> PathName -> f PathName
-extension f p = addExtension n <$> f e where (n, e) = splitExtension p
-
--- | @'filename' :: Lens' 'PathName' 'PathName'@
-filename :: (Functor f) => (PathName -> f PathName) -> PathName -> f PathName
-filename f p = (takeDirectory p `combine`) <$> f (takeFileName p)
-
--- * IO operations
-
-{- We should probably take greater care to ensure consistent exceptions across
- - platforms here, or at least document what additional exceptions might get
- - thrown by the POSIX backend, that aren't thrown by the directory package.
- -
- - Also, we should consider making directory an unconditional dependency and
- - use its Permissions type rather than re-defining it here.  On the other
- - hand, that might be questionable if PathName ever moves to ByteString
- - unconditionally.
- -}
-
--- data Permissions = Permissions
---     { readable, writable, executable, searchable :: Bool }
---   deriving (Eq, Ord, Read, Show)
-
-canonicalizePath :: PathName -> IO PathName
-#ifdef __POSIX__
--- ^ 'Backend.realpath'
-canonicalizePath = unsafeCoerce Backend.realpath
-#else
--- ^ 'Backend.canonicalizePath'
-canonicalizePath = unsafeCoerce Backend.canonicalizePath
-#endif
-
--- copyFile :: PathName -> PathName -> IO ()
--- copyPermissions :: PathName -> PathName -> IO ()
-
--- | 'Backend.createDirectory'
-createDirectory :: PathName -> IO ()
-createDirectory = unsafeCoerce
-#ifdef __POSIX__
-    (`Backend.createDirectory` Backend.accessModes)
-#else
-    Backend.createDirectory
-#endif
-
--- createDirectoryIfMissing :: Bool -> PathName -> IO ()
--- doesDirectoryExist :: PathName -> IO Bool
--- doesFileExist :: PathName -> IO Bool
--- emptyPermissions :: Permissions
--- findExecutable :: String -> IO (Maybe PathName)
--- findFile :: [PathName] -> String -> IO (Maybe PathName)
--- getAppUserDataDirectory :: String -> IO PathName
-
-getCurrentDirectory :: IO PathName
-#ifdef __POSIX__
--- ^ 'Backend.getWorkingDirectory'
-getCurrentDirectory = unsafeCoerce Backend.getWorkingDirectory
-#else
--- ^ 'Backend.getCurrentDirectory'
-getCurrentDirectory = unsafeCoerce Backend.getCurrentDirectory
-#endif
-
--- getDirectoryContents :: PathName -> IO [PathName]
-
-getHomeDirectory :: IO PathName
-#ifdef __POSIX__
--- ^ 'Backend.getEnv' @\"HOME\"@
-getHomeDirectory =
-    maybe (ioError ioeHOME) (return . unsafeCoerce) =<< Backend.getEnv "HOME"
-  where
-    ioeHOME = IO.mkIOError IO.doesNotExistErrorType "getHomeDirectory" Nothing
-        (Just "HOME") `IO.ioeSetErrorString` "no environment variable"
-#else
--- ^ 'Backend.getHomeDirectory'
-getHomeDirectory = unsafeCoerce Backend.getHomeDirectory
-#endif
-
-getModificationTime :: PathName -> IO UTCTime
-#ifdef __POSIX__
--- ^ 'Backend.modificationTimeHiRes'
-getModificationTime =
-    fmap (toUTCTime . modificationTime) . unsafeCoerce getFileStatus
-  where
-    toUTCTime = Backend.posixSecondsToUTCTime
-    modificationTime = Backend.modificationTimeHiRes
-    getFileStatus = Backend.getFileStatus
-#else
--- ^ 'Backend.getModificationTime'
-getModificationTime = unsafeCoerce Backend.getModificationTime
-#endif
-
--- getPermissions :: PathName -> IO Permissions
--- getTemporaryDirectory :: IO PathName
--- getUserDocumentsDirectory :: IO PathName
-
-makeRelativeToCurrentDirectory :: PathName -> IO PathName
-#ifdef __POSIX__
--- ^ 'makeRelative' to 'getCurrentDirectory'
-makeRelativeToCurrentDirectory path =
-    fmap (flip makeRelative path) getCurrentDirectory
-#else
--- ^ 'Backend.makeRelativeToCurrentDirectory'
-makeRelativeToCurrentDirectory =
-    unsafeCoerce Backend.makeRelativeToCurrentDirectory
-#endif
-
--- | 'Backend.removeDirectory'
-removeDirectory :: PathName -> IO ()
-removeDirectory = unsafeCoerce Backend.removeDirectory
-
--- removeDirectoryRecursive :: PathName -> IO ()
-
-removeFile :: PathName -> IO ()
-#ifdef __POSIX__
--- ^ 'Backend.removeLink'
-removeFile = unsafeCoerce Backend.removeLink
-#else
--- ^ 'Backend.removeFile'
-removeFile = unsafeCoerce Backend.removeFile
-#endif
-
--- renameDirectory :: PathName -> PathName -> IO ()
--- renameFile :: PathName -> PathName -> IO ()
--- setCurrentDirectory :: PathName -> IO ()
--- setOwnerExecutable :: Bool -> Permissions -> Permissions
--- setOwnerReadable :: Bool -> Permissions -> Permissions
--- setOwnerSearchable :: Bool -> Permissions -> Permissions
--- setOwnerWritable :: Bool -> Permissions -> Permissions
--- setPermissions :: PathName -> Permissions -> IO ()
-
--- * Handle operations
-
--- appendFile :: PathName -> String -> IO ()
--- openBinaryFile :: PathName -> IOMode -> IO Handle
--- openBinaryTempFile :: PathName -> String -> IO (PathName, Handle)
--- openBinaryTempFileWithDefaultPermissions :: PathName -> String -> IO (PathName, Handle)
--- openFile :: PathName -> IOMode -> IO Handle
--- openTempFile :: PathName -> String -> IO (PathName, Handle)
--- openTempFileWithDefaultPermissions :: PathName -> String -> IO (PathName, Handle)
--- readFile :: PathName -> IO String
--- withBinaryFile :: PathName -> IOMode -> (Handle -> IO r) -> IO r
--- withFile :: PathName -> IOMode -> (Handle -> IO r) -> IO r
--- writeFile :: PathName -> String -> IO ()
+instance Monoid WindowsPath where
+    mempty = WindowsPath mempty
+    mappend = combine
+    mconcat = joinPath
+
+instance IsString PosixPath where
+    fromString = PosixPath . fromString
+
+instance IsString WindowsPath where
+    fromString = WindowsPath . fromString
+
+type PosixPath = PathName Posix
+type WindowsPath = PathName Windows
+type SystemPath = PathName System
+
+addExtension :: PathName iface -> Component iface -> PathName iface
+addExtension = error "System.PathName.addExtension: not implemented"
+
+addTrailingPathSeparator :: PathName iface -> PathName iface
+addTrailingPathSeparator = error "System.PathName.addTrailingPathSeparator: not implemented"
+
+appendFile :: SystemPath -> String -> IO ()
+appendFile = error "System.PathName.appendFile: not implemented"
+
+canonicalizePath :: SystemPath -> IO SystemPath
+canonicalizePath = error "System.PathName.canonicalizePath: not implemented"
+
+combine :: PathName iface -> PathName iface -> PathName iface
+combine = error "System.PathName.combine: not implemented"
+
+copyFile :: SystemPath -> SystemPath -> IO ()
+copyFile = error "System.PathName.copyFile: not implemented"
+
+copyPermissions :: SystemPath -> SystemPath -> IO ()
+copyPermissions = error "System.PathName.copyPermissions: not implemented"
+
+createDirectory :: SystemPath -> IO ()
+createDirectory = error "System.PathName.createDirectory: not implemented"
+
+createDirectoryIfMissing :: Bool -> SystemPath -> IO ()
+createDirectoryIfMissing = error "System.PathName.createDirectoryIfMissing: not implemented"
+
+doesDirectoryExist :: SystemPath -> IO Bool
+doesDirectoryExist = error "System.PathName.doesDirectoryExist: not implemented"
+
+doesFileExist :: SystemPath -> IO Bool
+doesFileExist = error "System.PathName.doesFileExist: not implemented"
+
+dropDrive :: WindowsPath -> WindowsPath
+dropDrive = error "System.PathName.dropDrive: not implemented"
+
+dropExtension :: PathName iface -> PathName iface
+dropExtension = error "System.PathName.dropExtension: not implemented"
+
+dropExtensions :: PathName iface -> PathName iface
+dropExtensions = error "System.PathName.dropExtensions: not implemented"
+
+dropFileName :: PathName iface -> PathName iface
+dropFileName = error "System.PathName.dropFileName: not implemented"
+
+dropTrailingPathSeparator :: PathName iface -> PathName iface
+dropTrailingPathSeparator = error "System.PathName.dropTrailingPathSeparator: not implemented"
+
+emptyPermissions :: Permissions
+emptyPermissions = error "System.PathName.emptyPermissions: not implemented"
+
+equalFilePath :: PathName iface -> PathName iface -> Bool
+equalFilePath = error "System.PathName.equalFilePath: not implemented"
+
+extSeparator :: Sing iface -> Separator iface
+extSeparator SPosix = (PosixSeparator . toEnum . fromEnum) '.'
+expSeparator SWindows = WindowsSeparator '.'
+
+findExecutable :: Component System -> IO (Maybe SystemPath)
+findExecutable = error "System.PathName.findExecutable: not implemented"
+
+findFile :: [SystemPath] -> Component System -> IO (Maybe SystemPath)
+findFile = error "System.PathName.findFile: not implemented"
+
+getAppUserDataDirectory :: Component System -> IO SystemPath
+getAppUserDataDirectory = error "System.PathName.getAppUserDataDirectory: not implemented"
+
+getCurrentDirectory :: IO SystemPath
+getCurrentDirectory = error "System.PathName.getCurrentDirectory: not implemented"
+
+getDirectoryContents :: SystemPath -> IO [SystemPath]
+getDirectoryContents = error "System.PathName.getDirectoryContents: not implemented"
+
+getHomeDirectory :: IO SystemPath
+getHomeDirectory = error "System.PathName.getHomeDirectory: not implemented"
+
+getModificationTime :: SystemPath -> IO UTCTime
+getModificationTime = error "System.PathName.getModificationTime: not implemented"
+
+getPermissions :: SystemPath -> IO Permissions
+getPermissions = error "System.PathName.getPermissions: not implemented"
+
+getSearchPath :: IO [SystemPath]
+getSearchPath = error "System.PathName.getSearchPath: not implemented"
+
+getTemporaryDirectory :: IO SystemPath
+getTemporaryDirectory = error "System.PathName.getTemporaryDirectory: not implemented"
+
+getUserDocumentsDirectory :: IO SystemPath
+getUserDocumentsDirectory = error "System.PathName.getUserDocumentsDirectory: not implemented"
+
+hasDrive :: WindowsPath -> Bool
+hasDrive = error "System.PathName.hasDrive: not implemented"
+
+hasExtension :: PathName iface -> Bool
+hasExtension = error "System.PathName.hasExtension: not implemented"
+
+hasTrailingPathSeparator :: PathName iface -> Bool
+hasTrailingPathSeparator = error "System.PathName.hasTrailingPathSeparator: not implemented"
+
+isAbsolute :: PathName iface -> Bool
+isAbsolute = error "System.PathName.isAbsolute: not implemented"
+
+isDrive :: WindowsPath -> Bool
+isDrive = error "System.PathName.isDrive: not implemented"
+
+isExtSeparator :: Separator iface -> Bool
+isExtSeparator s@(PosixSeparator _) = s == extSeparator posix
+isExtSeparator s@(WindowsSeparator _) = s == extSeparator windows
+
+isPathSeparator :: Separator iface -> Bool
+isPathSeparator s@(PosixSeparator _) = s == pathSeparator posix
+isPathSeparator s@(WindowsSeparator _) = s `elem` pathSeparators windows
+
+isRelative :: PathName iface -> Bool
+isRelative = error "System.PathName.isRelative: not implemented"
+
+isSearchPathSeparator :: Separator iface -> Bool
+isSearchPathSeparator s@(PosixSeparator _) = s == searchPathSeparator posix
+isSearchPathSeparator s@(WindowsSeparator _) = s == searchPathSeparator windows
+
+isValid :: PathName iface -> Bool
+isValid = error "System.PathName.isValid: not implemented"
+
+joinDrive :: WindowsPath -> WindowsPath -> WindowsPath
+joinDrive = error "System.PathName.joinDrive: not implemented"
+
+joinPath :: [PathName iface] -> PathName iface
+joinPath = error "System.PathName.joinPath: not implemented"
+
+makeRelative :: PathName iface -> PathName iface -> PathName iface
+makeRelative = error "System.PathName.makeRelative: not implemented"
+
+makeRelativeToCurrentDirectory :: SystemPath -> IO SystemPath
+makeRelativeToCurrentDirectory = error "System.PathName.makeRelativeToCurrentDirectory: not implemented"
+
+makeValid :: PathName iface -> PathName iface
+makeValid = error "System.PathName.makeValid: not implemented"
+
+normalise :: PathName iface -> PathName iface
+normalise = error "System.PathName.normalise: not implemented"
+
+openBinaryFile :: SystemPath -> IOMode -> IO Handle
+openBinaryFile = error "System.PathName.openBinaryFile: not implemented"
+
+openBinaryTempFile :: SystemPath -> Component System -> IO (SystemPath, Handle)
+openBinaryTempFile = error "System.PathName.openBinaryTempFile: not implemented"
+
+openBinaryTempFileWithDefaultPermissions :: SystemPath -> Component System -> IO (SystemPath, Handle)
+openBinaryTempFileWithDefaultPermissions = error "System.PathName.openBinaryTempFileWithDefaultPermissions: not implemented"
+
+openFile :: SystemPath -> IOMode -> IO Handle
+openFile = error "System.PathName.openFile: not implemented"
+
+openTempFile :: SystemPath -> Component System -> IO (SystemPath, Handle)
+openTempFile = error "System.PathName.openTempFile: not implemented"
+
+openTempFileWithDefaultPermissions :: SystemPath -> Component System -> IO (SystemPath, Handle)
+openTempFileWithDefaultPermissions = error "System.PathName.openTempFileWithDefaultPermissions: not implemented"
+
+pathSeparator :: Sing iface -> Separator iface
+pathSeparator SPosix = (PosixSeparator . toEnum . fromEnum) '/'
+pathSeparator SWindows = WindowsSeparator '\\'
+
+pathSeparators :: Sing iface -> [Separator iface]
+pathSeparators SPosix = [pathSeparator posix]
+pathSeparators SWindows = [pathSeparator windows, WindowsSeparator '/']
+
+readFile :: SystemPath -> IO String
+readFile = error "System.PathName.readFile: not implemented"
+
+removeDirectory :: SystemPath -> IO ()
+removeDirectory = error "System.PathName.removeDirectory: not implemented"
+
+removeDirectoryRecursive :: SystemPath -> IO ()
+removeDirectoryRecursive = error "System.PathName.removeDirectoryRecursive: not implemented"
+
+removeFile :: SystemPath -> IO ()
+removeFile = error "System.PathName.removeFile: not implemented"
+
+renameDirectory :: SystemPath -> SystemPath -> IO ()
+renameDirectory = error "System.PathName.renameDirectory: not implemented"
+
+renameFile :: SystemPath -> SystemPath -> IO ()
+renameFile = error "System.PathName.renameFile: not implemented"
+
+replaceBaseName :: PathName iface -> Component iface -> PathName iface
+replaceBaseName = error "System.PathName.replaceBaseName: not implemented"
+
+replaceDirectory :: PathName iface -> Component iface -> PathName iface
+replaceDirectory = error "System.PathName.replaceDirectory: not implemented"
+
+replaceExtension :: PathName iface -> Component iface -> PathName iface
+replaceExtension = error "System.PathName.replaceExtension: not implemented"
+
+replaceFileName :: PathName iface -> Component iface -> PathName iface
+replaceFileName = error "System.PathName.replaceFileName: not implemented"
+
+searchPathSeparator :: Sing iface -> Separator iface
+searchPathSeparator SPosix = (PosixSeparator . toEnum . fromEnum) ';'
+searchPathSeparator SWindows = WindowsSeparator ';'
+
+setCurrentDirectory :: SystemPath -> IO ()
+setCurrentDirectory = error "System.PathName.setCurrentDirectory: not implemented"
+
+setOwnerExecutable :: Bool -> Permissions -> Permissions
+setOwnerExecutable = error "System.PathName.setOwnerExecutable: not implemented"
+
+setOwnerReadable :: Bool -> Permissions -> Permissions
+setOwnerReadable = error "System.PathName.setOwnerReadable: not implemented"
+
+setOwnerSearchable :: Bool -> Permissions -> Permissions
+setOwnerSearchable = error "System.PathName.setOwnerSearchable: not implemented"
+
+setOwnerWritable :: Bool -> Permissions -> Permissions
+setOwnerWritable = error "System.PathName.setOwnerWritable: not implemented"
+
+setPermissions :: SystemPath -> Permissions -> IO ()
+setPermissions = error "System.PathName.setPermissions: not implemented"
+
+splitDirectories :: PathName iface -> [PathName iface]
+splitDirectories = error "System.PathName.splitDirectories: not implemented"
+
+splitDrive :: WindowsPath -> (WindowsPath, WindowsPath)
+splitDrive = error "System.PathName.splitDrive: not implemented"
+
+splitExtension :: PathName iface -> (Component iface, Component iface)
+splitExtension = error "System.PathName.splitExtension: not implemented"
+
+splitExtensions :: PathName iface -> (PathName iface, Component iface)
+splitExtensions = error "System.PathName.splitExtensions: not implemented"
+
+splitFileName :: PathName iface -> (Component iface, Component iface)
+splitFileName = error "System.PathName.splitFileName: not implemented"
+
+splitPath :: PathName iface -> [PathName iface]
+splitPath = error "System.PathName.splitPath: not implemented"
+
+splitSearchPath :: Component iface -> [PathName iface]
+splitSearchPath = error "System.PathName.splitSearchPath: not implemented"
+
+takeBaseName :: PathName iface -> Component iface
+takeBaseName = error "System.PathName.takeBaseName: not implemented"
+
+takeDirectory :: PathName iface -> PathName iface
+takeDirectory = error "System.PathName.takeDirectory: not implemented"
+
+takeDrive :: WindowsPath -> WindowsPath
+takeDrive = error "System.PathName.takeDrive: not implemented"
+
+takeExtension :: PathName iface -> Component iface
+takeExtension = error "System.PathName.takeExtension: not implemented"
+
+takeExtensions :: PathName iface -> Component iface
+takeExtensions = error "System.PathName.takeExtensions: not implemented"
+
+takeFileName :: PathName iface -> PathName iface
+takeFileName = error "System.PathName.takeFileName: not implemented"
+
+withBinaryFile :: SystemPath -> IOMode -> (Handle -> IO r) -> IO r
+withBinaryFile = error "System.PathName.withBinaryFile: not implemented"
+
+withFile :: SystemPath -> IOMode -> (Handle -> IO r) -> IO r
+withFile = error "System.PathName.withFile: not implemented"
+
+writeFile :: SystemPath -> String -> IO ()
+writeFile = error "System.PathName.writeFile: not implemented"
