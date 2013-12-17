@@ -33,6 +33,8 @@ LIBRARY
     exposed-modules: System.Path
     exposed-modules: System.Path.Core
     exposed-modules: System.Path.Internal
+    exposed-modules: System.Path.Posix
+    exposed-modules: System.Path.Windows
     exposed-modules: System.PathName
     exposed-modules: System.PathName.Internal
 
